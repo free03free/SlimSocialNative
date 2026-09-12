@@ -115,12 +115,33 @@ class MainActivity : Activity() {
         prefs.edit().putInt("blocked_count", n + 1).apply()
     }
 
+    private fun isProfilePageOrGroupUrl(u: String): Boolean {
+        if (u.contains("/groups/")) return true
+        if (u.contains("/pages/")) return true
+        if (u.contains("/profile.php")) return true
+        if (u.contains("/people/")) return true
+        val regex = Regex("facebook\\.com/([a-z0-9_.\\-]+)/?(?:[?#]|$)")
+        val match = regex.find(u)
+        if (match != null) {
+            val seg = match.groupValues[1]
+            val reserved = setOf("home.php","login.php","checkpoint","help","settings","notifications","friends","photo.php","photos.php","story.php","permalink.php","sharer.php","privacy","dialog","unified","l.php","messages","messenger","watch","reel","marketplace","search","www","m","mbasic","touch")
+            if (seg !in reserved && seg.isNotEmpty()) return true
+        }
+        return false
+    }
+
     private fun handleNavigation(url: String): Boolean {
         val u = url.lowercase()
         val isFacebookDomain = u.contains("facebook.com") || u.contains("fbcdn.net")
 
         if (prefs.getBoolean("block_external", false) && !isFacebookDomain) {
             runOnUiThread { Toast.makeText(this, "تم منع رابط خارجي", Toast.LENGTH_SHORT).show() }
+            incrementBlockedCount()
+            return true
+        }
+
+        if (prefs.getBoolean("block_profile_nav", false) && isFacebookDomain && !isAuth(u) && isProfilePageOrGroupUrl(u)) {
+            runOnUiThread { Toast.makeText(this, "تم منع زيارة هذا الملف الشخصي/الصفحة/المجموعة", Toast.LENGTH_SHORT).show() }
             incrementBlockedCount()
             return true
         }
@@ -223,7 +244,13 @@ class MainActivity : Activity() {
         val map = mapOf("Like / Reactions" to "a[href*='/reaction/'],a[href*='/ufi/reaction'],[aria-label='Like' i],[aria-label='React' i]", "Comments" to "a[href*='comment'],[aria-label*='Comment' i]", "Share" to "a[href*='share'],[aria-label*='Share' i]", "Search" to "a[href*='search'],input[placeholder*='Search' i]", "Messenger" to "a[href*='messages'],a[href*='messenger']", "Stories" to "a[href*='stories']", "Reels / Watch" to "a[href*='reel'],a[href*='watch']", "Marketplace" to "a[href*='marketplace']")
         map.forEach { (k,sel) -> if(prefs.getBoolean(k,false)) js.append("s+=`").append(sel).append("{display:none!important;pointer-events:none!important;}`;") }
         if (prefs.getBoolean("dark_mode", false)) js.append("s+='html{filter:invert(1) hue-rotate(180deg) !important;} img,video,iframe{filter:invert(1) hue-rotate(180deg) !important;}';")
-        js.append("var st=document.getElementById('slimstyle-tag')||document.createElement('style');st.id='slimstyle-tag';st.textContent=s;document.head.appendChild(st);})();")
+        if (prefs.getBoolean("block_images", false)) js.append("s+='img,svg image{visibility:hidden!important;}';")
+        if (prefs.getBoolean("block_videos", false)) js.append("s+='video{visibility:hidden!important;}';")
+        if (prefs.getBoolean("block_video_swipe", false)) js.append("s+='video,[data-pagelet*=\\\"Reel\\\" i],[role=\\\"main\\\"] video{touch-action:none!important;}';")
+        js.append("var st=document.getElementById('slimstyle-tag')||document.createElement('style');st.id='slimstyle-tag';st.textContent=s;document.head.appendChild(st);")
+        js.append("if(!window.__slimSwipeGuard){window.__slimSwipeGuard=true;document.addEventListener('touchmove',function(e){if(window.__slimBlockSwipe){var t=e.target.closest('video');if(t){e.preventDefault();}}},{passive:false});}")
+        js.append("window.__slimBlockSwipe=").append(prefs.getBoolean("block_video_swipe", false)).append(";")
+        js.append("})();")
         web.evaluateJavascript(js.toString(),null)
     }
 
@@ -237,11 +264,27 @@ class MainActivity : Activity() {
 
         val sep1 = TextView(this); sep1.text="— خيارات إضافية —"; sep1.setPadding(0,20,0,10); sep1.setTextColor(Color.GRAY); box.addView(sep1)
 
+        val swImages = Switch(this); swImages.text="منع عرض الصور"; swImages.isChecked=prefs.getBoolean("block_images",false)
+        swImages.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_images",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
+        box.addView(swImages)
+
+        val swVideos = Switch(this); swVideos.text="منع عرض الفيديوهات"; swVideos.isChecked=prefs.getBoolean("block_videos",false)
+        swVideos.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_videos",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
+        box.addView(swVideos)
+
+        val swSwipe = Switch(this); swSwipe.text="منع سحب الشاشة للتنقل بين الفيديوهات"; swSwipe.isChecked=prefs.getBoolean("block_video_swipe",false)
+        swSwipe.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_video_swipe",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
+        box.addView(swSwipe)
+
+        val swProfileNav = Switch(this); swProfileNav.text="منع زيارة أي بروفايل / صفحة / مجموعة"; swProfileNav.isChecked=prefs.getBoolean("block_profile_nav",false)
+        swProfileNav.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_profile_nav",v).apply() }
+        box.addView(swProfileNav)
+
         val swExternal = Switch(this); swExternal.text="منع الروابط الخارجية"; swExternal.isChecked=prefs.getBoolean("block_external",false)
         swExternal.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_external",v).apply() }
         box.addView(swExternal)
 
-        val swGroups = Switch(this); swGroups.text="منع مجموعات غير مشترك فيها"; swGroups.isChecked=prefs.getBoolean("block_unjoined_groups",false)
+        val swGroups = Switch(this); swGroups.text="منع مجموعات غير مشترك فيها (استثناء يدوي)"; swGroups.isChecked=prefs.getBoolean("block_unjoined_groups",false)
         swGroups.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_unjoined_groups",v).apply() }
         box.addView(swGroups)
 

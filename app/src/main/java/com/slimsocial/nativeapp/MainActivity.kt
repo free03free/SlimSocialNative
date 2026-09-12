@@ -143,7 +143,9 @@ class MainActivity : Activity() {
         val regex = Regex("facebook\\.com/groups/([^/?&#]+)")
         val match = regex.find(url)
         return match?.groupValues?.get(1)
-        private fun checkAndTickUsage() {
+    }
+
+    private fun checkAndTickUsage() {
         val limit = prefs.getInt("daily_limit_minutes", 0)
         if (limit <= 0) return
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
@@ -312,4 +314,3 @@ class MainActivity : Activity() {
 
     override fun onBackPressed(){ if(web.canGoBack()) web.goBack() else super.onBackPressed() }
 }
-    }

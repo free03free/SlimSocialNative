@@ -56,7 +56,7 @@ class MainActivity : Activity() {
         web = findViewById(R.id.web)
         web.settings.javaScriptEnabled = !prefs.getBoolean("disable_js", false)
         web.settings.domStorageEnabled = true
-        web.settings.userAgentString = WebSettings.getDefaultUserAgent(this)
+        web.settings.userAgentString = WebSettings.getDefaultUserAgent(this).replace("; wv", "").replace("wv;", "")
         web.addJavascriptInterface(object {
             @android.webkit.JavascriptInterface
             fun setPlaying(playing: Boolean) { videoPlaying = playing }

@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private val tapHandler = Handler(Looper.getMainLooper())
     private var tapCount = 0
     private var lastKeywordRedirect = 0L
+    private var lastBlockedRedirect = 0L
     private val usageHandler = Handler(Looper.getMainLooper())
     private var usageRunning = false
 
@@ -389,13 +390,45 @@ class MainActivity : Activity() {
         Toast.makeText(this, "تم إرجاعك للرئيسية (الصفحة تحتوي على كلمة محظورة)", Toast.LENGTH_SHORT).show()
     }
 
+    // Guarantees a blocked SPA route is actually hidden and eventually cleared:
+    // 1) blanks the page immediately (don't wait on the SPA to re-render correctly),
+    // 2) attempts the configured redirect,
+    // 3) verifies after a short delay — if the blocked URL is still current, forces a
+    //    real page load (hard block) instead of leaving the content visible.
+    // Debounced so a misbehaving SPA polling the same blocked URL doesn't spam toasts.
+    private fun enforceLeave(blockedUrl: String, useBack: Boolean, fallbackUrl: String, message: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastBlockedRedirect < 1500) return
+        lastBlockedRedirect = now
+        web.evaluateJavascript(
+            "(function(){var o=document.getElementById('slim-block-overlay')||document.createElement('div');o.id='slim-block-overlay';o.style.cssText='position:fixed;inset:0;background:#000;z-index:2147483647;';document.documentElement.appendChild(o);})();",
+            null
+        )
+        web.post {
+            web.stopLoading()
+            if (useBack && web.canGoBack()) web.goBack() else web.loadUrl(fallbackUrl)
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            tapHandler.postDelayed({
+                web.evaluateJavascript("location.href") { current ->
+                    val cur = current?.trim('"') ?: ""
+                    if (normalizeUrl(cur) == normalizeUrl(blockedUrl)) {
+                        web.loadUrl(getHomeUrl())
+                    } else {
+                        web.evaluateJavascript("(function(){var o=document.getElementById('slim-block-overlay');if(o)o.remove();})();", null)
+                    }
+                }
+            }, 500)
+        }
+    }
+
     private fun handleSpaNavigation(url: String) {
         if (isAuth(url)) return
         if (!isWithinScheduledHours()) { usageRunning = false; runOnUiThread { showScheduleBlockedScreen() }; return }
         if (checkDailyLimitExceeded()) { usageRunning = false; runOnUiThread { showLimitReachedScreen() }; return }
         if (isPageLocked(url)) {
             val lockedUrl = prefs.getString("lock_page_url", "") ?: getHomeUrl()
-            web.post { if (web.canGoBack()) web.goBack() else web.loadUrl(lockedUrl) }
+            incrementBlockedCount()
+            enforceLeave(url, true, lockedUrl, "تم إرجاعك (الصفحة مقفلة)")
             return
         }
         if (prefs.getBoolean("media_viewer", true)) {
@@ -421,17 +454,11 @@ class MainActivity : Activity() {
             }
         }
         if (handleNavigation(url)) {
-            web.post {
-                web.stopLoading()
-                val mode = prefs.getString("blocked_redirect_mode", "back") ?: "back"
-                if (mode == "custom") {
-                    val customUrl = prefs.getString("blocked_redirect_url", "") ?: ""
-                    web.loadUrl(if (customUrl.isNotEmpty()) customUrl else getHomeUrl())
-                } else {
-                    if (web.canGoBack()) web.goBack() else web.loadUrl(getHomeUrl())
-                }
-                Toast.makeText(this, "تم إرجاعك (تنقّل ممنوع)", Toast.LENGTH_SHORT).show()
-            }
+            val mode = prefs.getString("blocked_redirect_mode", "back") ?: "back"
+            val customUrl = prefs.getString("blocked_redirect_url", "") ?: ""
+            val useBack = mode != "custom"
+            val fallback = if (mode == "custom" && customUrl.isNotEmpty()) customUrl else getHomeUrl()
+            enforceLeave(url, useBack, fallback, "تم إرجاعك (تنقّل ممنوع)")
         }
     }
 

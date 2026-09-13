@@ -90,22 +90,35 @@ class MainActivity : Activity() {
             // back/forward, and — via the SlimBridge.checkNav hooks — SPA route changes,
             // location.reload(), history.go(0)). This is the single choke point for links.
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
-                val url = r.url.toString()
-                val scheme = r.url.scheme?.lowercase() ?: ""
-                if (scheme != "http" && scheme != "https") {
-                    // Ignore app-deeplink / unsupported schemes (fb://, intent://, tel:, mailto:, etc.)
-                    // so the WebView doesn't try to load them and show ERR_UNKNOWN_URL_SCHEME.
-                    return true
-                }
+                return processNavigationUrl(v, r.url.toString())
+            }
+            // Compatibility overload for older WebView implementations.
+            // Both overloads use the same navigation decision function.
+            override fun shouldOverrideUrlLoading(v: WebView, url: String): Boolean {
+                return processNavigationUrl(v, url)
+            }
+
+            private fun processNavigationUrl(v: WebView, url: String): Boolean {
+                val parsed = try { Uri.parse(url) } catch (_: Exception) { return true }
+                val scheme = parsed.scheme?.lowercase() ?: ""
+                if (scheme != "http" && scheme != "https") return true
+
                 if (!isAuth(url)) {
-                    // Time/usage limits are enforced on EVERY link, not just the 60s background
-                    // tick — otherwise a tap right as the window closes can slip through for up
-                    // to a minute.
-                    if (!isWithinScheduledHours()) { usageRunning = false; runOnUiThread { showScheduleBlockedScreen() }; return true }
-                    if (checkDailyLimitExceeded()) { usageRunning = false; runOnUiThread { showLimitReachedScreen() }; return true }
+                    if (!isWithinScheduledHours()) {
+                        usageRunning = false
+                        runOnUiThread { showScheduleBlockedScreen() }
+                        return true
+                    }
+                    if (checkDailyLimitExceeded()) {
+                        usageRunning = false
+                        runOnUiThread { showLimitReachedScreen() }
+                        return true
+                    }
                 }
+
                 if (isPageLocked(url)) return true
                 if (isRefreshBlocked(url)) return true
+
                 if (prefs.getBoolean("media_viewer", true)) {
                     val media = detectMediaViewerUrl(url)
                     if (media != null) {
@@ -113,13 +126,8 @@ class MainActivity : Activity() {
                         return true
                     }
                 }
+
                 return handleNavigation(url)
-            }
-            // Defense-in-depth: if any navigation ever reaches the page-start stage without
-            // going through shouldOverrideUrlLoading above (e.g. a server-side redirect chain
-            // or a WebView-version quirk), catch it here too before content renders.
-            override fun shouldOverrideUrlLoading(v: WebView, url: String): Boolean {
-                return shouldOverrideUrlLoading(v, Uri.parse(url))
             }
 
             override fun onPageStarted(v: WebView, url: String, favicon: android.graphics.Bitmap?) {

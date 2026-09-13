@@ -304,9 +304,11 @@ class MainActivity : Activity() {
         if (prefs.getBoolean("dark_mode", false)) js.append("s+='html{filter:invert(1) hue-rotate(180deg) !important;} img,video,iframe{filter:invert(1) hue-rotate(180deg) !important;}';")
         if (prefs.getBoolean("block_images", false)) js.append("s+='img,svg image{visibility:hidden!important;}';")
         if (prefs.getBoolean("block_videos", false)) js.append("s+='video{visibility:hidden!important;}';")
-        if (prefs.getBoolean("block_video_swipe", false)) js.append("s+='video,[data-pagelet*=\\\"Reel\\\" i],[role=\\\"main\\\"] video{touch-action:none!important;}';")
+        if (prefs.getBoolean("block_video_swipe", false)) js.append("s+='video,[data-pagelet*=\\\"Reel\\\" i],[role=\\\"main\\\"] video{touch-action:none!important;}body.slim-reel-lock{touch-action:pan-x!important;overflow:hidden!important;}';")
+        if (prefs.getBoolean("block_top_nav", false)) js.append("s+='[role=\\\"tablist\\\"],[role=\\\"tablist\\\"] *{visibility:hidden!important;pointer-events:none!important;}';")
         js.append("var st=document.getElementById('slimstyle-tag')||document.createElement('style');st.id='slimstyle-tag';st.textContent=s;document.head.appendChild(st);")
-        js.append("if(!window.__slimSwipeGuard){window.__slimSwipeGuard=true;document.addEventListener('touchmove',function(e){if(window.__slimBlockSwipe){var t=e.target.closest('video,[data-pagelet*=\"Reel\" i],[aria-label*=\"Reel\" i],[role=\"main\"] video');if(t){e.preventDefault();}}},{passive:false});}")
+        js.append("if(/\\/(reel|watch)/i.test(location.pathname)){document.body.classList.add('slim-reel-lock');}else{document.body.classList.remove('slim-reel-lock');}")
+        js.append("if(!window.__slimSwipeGuard){window.__slimSwipeGuard=true;document.addEventListener('touchmove',function(e){if(window.__slimBlockSwipe){var onReelPage=/\\/(reel|watch)/i.test(location.pathname);var t=e.target.closest('video,[data-pagelet*=\\\"Reel\\\" i],[aria-label*=\\\"Reel\\\" i],[role=\\\"main\\\"] video');if(t||onReelPage){e.preventDefault();}}},{passive:false});}")
         js.append("window.__slimBlockSwipe=").append(prefs.getBoolean("block_video_swipe", false)).append(";")
         js.append("if(!window.__slimVideoTracker){window.__slimVideoTracker=true;function slimHook(v){if(v.__slimHooked)return;v.__slimHooked=true;v.addEventListener('play',function(){if(window.SlimBridge)SlimBridge.setPlaying(true);});v.addEventListener('pause',function(){if(window.SlimBridge)SlimBridge.setPlaying(false);});v.addEventListener('ended',function(){if(window.SlimBridge)SlimBridge.setPlaying(false);});}document.querySelectorAll('video').forEach(slimHook);new MutationObserver(function(){document.querySelectorAll('video').forEach(slimHook);}).observe(document.body,{childList:true,subtree:true});}")
         js.append("window.__slimBlockRefresh=").append(prefs.getBoolean("block_refresh", false)).append(";")
@@ -350,6 +352,10 @@ class MainActivity : Activity() {
         val swProfileNav = Switch(this); swProfileNav.text="منع زيارة أي بروفايل / صفحة / مجموعة"; swProfileNav.isChecked=prefs.getBoolean("block_profile_nav",false)
         swProfileNav.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_profile_nav",v).apply() }
         box.addView(swProfileNav)
+
+        val swTopNav = Switch(this); swTopNav.text="إخفاء القائمة العلوية لفيسبوك (أينما كانت)"; swTopNav.isChecked=prefs.getBoolean("block_top_nav",false)
+        swTopNav.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_top_nav",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
+        box.addView(swTopNav)
 
         val swExternal = Switch(this); swExternal.text="منع الروابط الخارجية"; swExternal.isChecked=prefs.getBoolean("block_external",false)
         swExternal.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_external",v).apply() }

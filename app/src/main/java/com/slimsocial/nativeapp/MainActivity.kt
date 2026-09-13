@@ -17,6 +17,7 @@ import java.util.*
 
 class MainActivity : Activity() {
     private lateinit var web: WebView
+    @Volatile private var videoPlaying = false
     private val prefs by lazy { getSharedPreferences("controls", MODE_PRIVATE) }
     private val blocks = listOf("Like / Reactions","Comments","Share","Follow / Friends","Profiles","Messenger","Stories","Reels / Watch","Search","Post creation","Upload","Marketplace","Group interactions","All buttons")
     private val arabicLabels = mapOf(
@@ -55,9 +56,14 @@ class MainActivity : Activity() {
         web.settings.javaScriptEnabled = !prefs.getBoolean("disable_js", false)
         web.settings.domStorageEnabled = true
         web.settings.userAgentString = WebSettings.getDefaultUserAgent(this)
+        web.addJavascriptInterface(object {
+            @android.webkit.JavascriptInterface
+            fun setPlaying(playing: Boolean) { videoPlaying = playing }
+        }, "SlimBridge")
         web.webViewClient = object: WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
                 val url = r.url.toString()
+                if (isRefreshBlocked(url)) return true
                 return handleNavigation(url)
             }
             override fun onPageFinished(v: WebView, url: String) {
@@ -69,7 +75,10 @@ class MainActivity : Activity() {
         val menuBtn = findViewById<View>(R.id.menu)
         val reloadBtn = findViewById<View>(R.id.reload)
         menuBtn.setOnClickListener { checkPasswordThen { showControls() } }
-        reloadBtn.setOnClickListener { web.reload() }
+        reloadBtn.setOnClickListener {
+            if (prefs.getBoolean("block_refresh", false)) Toast.makeText(this, "تحديث الصفحة معطّل من الإعدادات", Toast.LENGTH_SHORT).show()
+            else web.reload()
+        }
         applyToolbarVisibility(menuBtn, reloadBtn)
 
         val root = findViewById<View>(android.R.id.content)
@@ -130,6 +139,39 @@ class MainActivity : Activity() {
         return false
     }
 
+    private fun normalizeUrl(u: String): String {
+        return u.lowercase().substringBefore("?").substringBefore("#").trimEnd('/')
+    }
+
+    private fun isRefreshBlocked(url: String): Boolean {
+        val isReload = normalizeUrl(url) == normalizeUrl(web.url ?: "")
+        if (!isReload) return false
+        if (prefs.getBoolean("block_refresh", false)) {
+            runOnUiThread { Toast.makeText(this, "تحديث الصفحة معطّل من الإعدادات", Toast.LENGTH_SHORT).show() }
+            incrementBlockedCount()
+            return true
+        }
+        if (prefs.getBoolean("block_refresh_on_video", false) && videoPlaying) {
+            runOnUiThread { Toast.makeText(this, "تم منع التحديث أثناء تشغيل فيديو", Toast.LENGTH_SHORT).show() }
+            incrementBlockedCount()
+            return true
+        }
+        return false
+    }
+
+    private fun getWhitelistSet(): List<String> {
+        val raw = prefs.getString("group_whitelist", "") ?: ""
+        return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+    }
+
+    private fun extractIdentifier(url: String): String? {
+        val gid = extractGroupId(url)
+        if (gid != null) return gid
+        val regex = Regex("facebook\\.com/([a-z0-9_.\\-]+)/?(?:[?#]|$)")
+        val match = regex.find(url)
+        return match?.groupValues?.get(1)
+    }
+
     private fun handleNavigation(url: String): Boolean {
         val u = url.lowercase()
         val isFacebookDomain = u.contains("facebook.com") || u.contains("fbcdn.net")
@@ -141,15 +183,18 @@ class MainActivity : Activity() {
         }
 
         if (prefs.getBoolean("block_profile_nav", false) && isFacebookDomain && !isAuth(u) && isProfilePageOrGroupUrl(u)) {
-            runOnUiThread { Toast.makeText(this, "تم منع زيارة هذا الملف الشخصي/الصفحة/المجموعة", Toast.LENGTH_SHORT).show() }
-            incrementBlockedCount()
-            return true
+            val id = extractIdentifier(u)
+            val whitelist = getWhitelistSet()
+            if (id == null || !whitelist.contains(id)) {
+                runOnUiThread { Toast.makeText(this, "تم منع زيارة هذا الملف الشخصي/الصفحة/المجموعة", Toast.LENGTH_SHORT).show() }
+                incrementBlockedCount()
+                return true
+            }
         }
 
         if (prefs.getBoolean("block_unjoined_groups", false) && u.contains("/groups/")) {
             val groupId = extractGroupId(u)
-            val whitelist = prefs.getString("group_whitelist", "") ?: ""
-            val allowed = whitelist.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val allowed = getWhitelistSet()
             if (groupId != null && !allowed.contains(groupId)) {
                 runOnUiThread { Toast.makeText(this, "مجموعة غير مسموح بها. أضفها من الإعدادات إن أردت السماح", Toast.LENGTH_LONG).show() }
                 incrementBlockedCount()
@@ -250,6 +295,7 @@ class MainActivity : Activity() {
         js.append("var st=document.getElementById('slimstyle-tag')||document.createElement('style');st.id='slimstyle-tag';st.textContent=s;document.head.appendChild(st);")
         js.append("if(!window.__slimSwipeGuard){window.__slimSwipeGuard=true;document.addEventListener('touchmove',function(e){if(window.__slimBlockSwipe){var t=e.target.closest('video');if(t){e.preventDefault();}}},{passive:false});}")
         js.append("window.__slimBlockSwipe=").append(prefs.getBoolean("block_video_swipe", false)).append(";")
+        js.append("if(!window.__slimVideoTracker){window.__slimVideoTracker=true;function slimHook(v){if(v.__slimHooked)return;v.__slimHooked=true;v.addEventListener('play',function(){if(window.SlimBridge)SlimBridge.setPlaying(true);});v.addEventListener('pause',function(){if(window.SlimBridge)SlimBridge.setPlaying(false);});v.addEventListener('ended',function(){if(window.SlimBridge)SlimBridge.setPlaying(false);});}document.querySelectorAll('video').forEach(slimHook);new MutationObserver(function(){document.querySelectorAll('video').forEach(slimHook);}).observe(document.body,{childList:true,subtree:true});}")
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
     }
@@ -297,19 +343,30 @@ class MainActivity : Activity() {
         swGroups.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_unjoined_groups",v).apply() }
         box.addView(swGroups)
 
-        val allowGroupBtn = TextView(this); allowGroupBtn.text="➕ سماح بالمجموعة الحالية"; allowGroupBtn.setTextColor(Color.BLUE); allowGroupBtn.setPadding(0,10,0,10)
+        val whitelistLabel = TextView(this); whitelistLabel.text="قائمة المجموعات/الصفحات المسموحة (افصل بفاصلة ,)"; whitelistLabel.setPadding(0,10,0,4); box.addView(whitelistLabel)
+        val whitelistInput = EditText(this); whitelistInput.setText(prefs.getString("group_whitelist","")); box.addView(whitelistInput)
+
+        val allowGroupBtn = TextView(this); allowGroupBtn.text="➕ إضافة المجموعة/الصفحة الحالية للقائمة أعلاه"; allowGroupBtn.setTextColor(Color.BLUE); allowGroupBtn.setPadding(0,6,0,10)
         allowGroupBtn.setOnClickListener {
             val currentUrl = web.url ?: ""
-            val gid = extractGroupId(currentUrl.lowercase())
-            if (gid != null) {
-                val current = prefs.getString("group_whitelist","") ?: ""
+            val id = extractIdentifier(currentUrl.lowercase())
+            if (id != null) {
+                val current = whitelistInput.text.toString()
                 val list = current.split(",").map{it.trim()}.filter{it.isNotEmpty()}.toMutableList()
-                if (!list.contains(gid)) list.add(gid)
-                prefs.edit().putString("group_whitelist", list.joinToString(",")).apply()
-                Toast.makeText(this,"تمت الإضافة للمسموح بها",Toast.LENGTH_SHORT).show()
-            } else Toast.makeText(this,"أنت لست في صفحة مجموعة حاليًا",Toast.LENGTH_SHORT).show()
+                if (!list.contains(id)) list.add(id)
+                whitelistInput.setText(list.joinToString(","))
+                Toast.makeText(this,"أُضيفت للقائمة، لا تنسَ الضغط على حفظ",Toast.LENGTH_SHORT).show()
+            } else Toast.makeText(this,"لا يمكن التعرف على هذه الصفحة",Toast.LENGTH_SHORT).show()
         }
         box.addView(allowGroupBtn)
+
+        val swRefresh = Switch(this); swRefresh.text="منع تحديث الصفحة بالكامل"; swRefresh.isChecked=prefs.getBoolean("block_refresh",false)
+        swRefresh.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh",v).apply() }
+        box.addView(swRefresh)
+
+        val swRefreshVideo = Switch(this); swRefreshVideo.text="منع التحديث أثناء تشغيل فيديو فقط"; swRefreshVideo.isChecked=prefs.getBoolean("block_refresh_on_video",false)
+        swRefreshVideo.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh_on_video",v).apply() }
+        box.addView(swRefreshVideo)
 
         val swDark = Switch(this); swDark.text="وضع داكن إجباري"; swDark.isChecked=prefs.getBoolean("dark_mode",false)
         swDark.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("dark_mode",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
@@ -351,6 +408,7 @@ class MainActivity : Activity() {
             prefs.edit()
                 .putString("css",custom.text.toString())
                 .putString("js",jsBox.text.toString())
+                .putString("group_whitelist", whitelistInput.text.toString())
                 .putInt("daily_limit_minutes", limitInput.text.toString().toIntOrNull() ?: 0)
                 .apply()
             applyCustom()

@@ -46,12 +46,13 @@ class MainActivity : Activity() {
     private var lastBlockedRedirect = 0L
     private val usageHandler = Handler(Looper.getMainLooper())
     private var usageRunning = false
+    private var usageLastTickMs = 0L
 
     private val usageTick = object : Runnable {
         override fun run() {
             if (!isWithinScheduledHours()) { usageRunning = false; showScheduleBlockedScreen(); return }
             checkAndTickUsage()
-            if (usageRunning) usageHandler.postDelayed(this, 60000)
+            if (usageRunning) usageHandler.postDelayed(this, 10000)
         }
     }
 
@@ -117,6 +118,10 @@ class MainActivity : Activity() {
             // Defense-in-depth: if any navigation ever reaches the page-start stage without
             // going through shouldOverrideUrlLoading above (e.g. a server-side redirect chain
             // or a WebView-version quirk), catch it here too before content renders.
+            override fun shouldOverrideUrlLoading(v: WebView, url: String): Boolean {
+                return shouldOverrideUrlLoading(v, Uri.parse(url))
+            }
+
             override fun onPageStarted(v: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 if (isAuth(url)) return
                 if (!isWithinScheduledHours()) { usageRunning = false; v.stopLoading(); runOnUiThread { showScheduleBlockedScreen() }; return }
@@ -161,7 +166,7 @@ class MainActivity : Activity() {
             text = "🏠"
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener { web.loadUrl(getHomeUrl()) }
+            setOnClickListener { val home = getHomeUrl(); if (!isAuth(home) && handleNavigation(home)) showBlockedToast("الصفحة الرئيسية محظورة بالإعدادات") else web.loadUrl(home) }
             setOnLongClickListener { showPagesChooser(); true }
         }
         (reloadBtn.parent as? ViewGroup)?.addView(homeBtn)
@@ -188,6 +193,7 @@ class MainActivity : Activity() {
         if (!isWithinScheduledHours()) { showScheduleBlockedScreen(); return }
         if (checkDailyLimitExceeded()) { showLimitReachedScreen(); return }
         usageRunning = true
+        usageLastTickMs = System.currentTimeMillis()
         usageHandler.post(usageTick)
     }
 
@@ -203,6 +209,138 @@ class MainActivity : Activity() {
         menuBtn.visibility = if (hide) View.GONE else View.VISIBLE
         reloadBtn.visibility = if (hide) View.GONE else View.VISIBLE
         homeBtn.visibility = if (hide) View.GONE else View.VISIBLE
+    }
+
+
+    private data class ParsedUrl(val scheme: String, val host: String, val path: String, val full: String)
+
+    private fun parseHttpUrl(raw: String): ParsedUrl? {
+        return try {
+            val s = raw.trim()
+            if (s.isEmpty()) return null
+            val uri = Uri.parse(s)
+            val scheme = (uri.scheme ?: "").lowercase(Locale.ROOT)
+            val host = (uri.host ?: "").lowercase(Locale.ROOT).trimEnd('.')
+            if ((scheme != "http" && scheme != "https") || host.isEmpty()) return null
+            val path = (uri.encodedPath ?: "/").replace(Regex("/{2,}"), "/").trimEnd('/').ifEmpty { "/" }
+            val port = uri.port
+            val authority = if (port == -1 || (scheme == "http" && port == 80) || (scheme == "https" && port == 443)) host else "$host:$port"
+            val full = "$scheme://$authority$path"
+            ParsedUrl(scheme, host, path, full)
+        } catch (_: Exception) { null }
+    }
+
+    private fun normalizeUrl(u: String): String {
+        return parseHttpUrl(u)?.full ?: u.trim().lowercase(Locale.ROOT)
+            .substringBefore("#").substringBefore("?").trimEnd('/')
+    }
+
+    private fun hostIs(host: String, domain: String): Boolean {
+        val h = host.lowercase(Locale.ROOT).trimEnd('.')
+        val d = domain.lowercase(Locale.ROOT).trimEnd('.')
+        return h == d || h.endsWith(".$d")
+    }
+
+    private fun isFacebookHost(host: String): Boolean {
+        return hostIs(host, "facebook.com") ||
+               hostIs(host, "fbcdn.net") ||
+               hostIs(host, "fbsbx.com") ||
+               hostIs(host, "facebook.net")
+    }
+
+    private fun parseRule(raw: String): Pair<String, String>? {
+        var s = raw.trim()
+        if (s.isEmpty()) return null
+        if (s.startsWith("*.")) s = s.removePrefix("*.")
+        if (!s.contains("://") && !s.startsWith("/")) s = "https://$s"
+        val parsed = parseHttpUrl(s) ?: return null
+        val originalHasScheme = raw.contains("://")
+        val path = parsed.path
+        return if (originalHasScheme) {
+            "exact" to parsed.full
+        } else if (path != "/") {
+            "path" to "${parsed.host}$path"
+        } else {
+            "host" to parsed.host
+        }
+    }
+
+    private fun ruleMatches(rawRule: String, url: String): Boolean {
+        val target = parseHttpUrl(url) ?: return false
+        val parsed = parseRule(rawRule) ?: return false
+        return when (parsed.first) {
+            "exact" -> target.full == parsed.second
+            "host" -> hostIs(target.host, parsed.second)
+            "path" -> {
+                val token = parsed.second
+                val slash = token.indexOf('/')
+                val host = if (slash >= 0) token.substring(0, slash) else token
+                val path = if (slash >= 0) token.substring(slash) else "/"
+                hostIs(target.host, host) &&
+                    (target.path == path || target.path.startsWith(path.trimEnd('/') + "/"))
+            }
+            else -> false
+        }
+    }
+
+    private fun getRuleListPref(key: String): List<String> {
+        val raw = prefs.getString(key, "") ?: ""
+        return raw.split(',', '\n', ';')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase(Locale.ROOT) }
+    }
+
+    private fun normalizedRuleText(raw: String): String? {
+        val p = parseRule(raw) ?: return null
+        return when (p.first) {
+            "exact" -> p.second
+            "path" -> p.second
+            "host" -> p.second
+            else -> null
+        }
+    }
+
+    private fun getRuleListFromText(input: String): List<String> =
+        input.split(',', '\n', ';').mapNotNull { normalizedRuleText(it) }.distinct()
+
+    private fun saveRuleList(input: String): String {
+        return input.split(',', '\n', ';')
+            .mapNotNull { normalizedRuleText(it) }
+            .distinct()
+            .joinToString(",")
+    }
+
+    private fun isExplicitCustomException(url: String): Boolean {
+        return getRuleListPref("custom_block_exceptions").any { ruleMatches(it, url) }
+    }
+
+    private fun showBlockedToast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun recheckCurrentPage() {
+        val current = web.url ?: return
+        if (isAuth(current)) {
+            if (!web.settings.javaScriptEnabled && !prefs.getBoolean("disable_js", false)) {
+                web.settings.javaScriptEnabled = true
+            }
+            return
+        }
+        applyControls()
+        applyCustom()
+        if (!isWithinScheduledHours()) { showScheduleBlockedScreen(); return }
+        if (checkDailyLimitExceeded()) { showLimitReachedScreen(); return }
+        if (isPageLocked(current)) {
+            val locked = prefs.getString("lock_page_url", "")?.takeIf { it.isNotBlank() } ?: getHomeUrl()
+            web.loadUrl(locked)
+            return
+        }
+        if (handleNavigation(current)) {
+            val mode = prefs.getString("blocked_redirect_mode", "back") ?: "back"
+            val custom = prefs.getString("blocked_redirect_url", "") ?: ""
+            enforceLeave(current, mode != "custom", if (mode == "custom" && custom.isNotBlank()) custom else getHomeUrl(), "تم منع هذا التنقّل")
+        }
     }
 
     private fun getHomeUrl(): String = prefs.getString("home_url", "https://www.facebook.com/") ?: "https://www.facebook.com/"
@@ -246,7 +384,14 @@ class MainActivity : Activity() {
     }
 
     private fun isAuth(url: String): Boolean {
-        val u=url.lowercase(); return listOf("/login","/checkpoint","/recover","/reg","/registration").any { u.contains("facebook.com$it") || u.contains("facebook.com$it/") }
+        val p = parseHttpUrl(url) ?: return false
+        if (!isFacebookHost(p.host)) return false
+        val path = p.path.lowercase(Locale.ROOT)
+        return path == "/login" || path.startsWith("/login/") ||
+               path == "/checkpoint" || path.startsWith("/checkpoint/") ||
+               path == "/recover" || path.startsWith("/recover/") ||
+               path == "/reg" || path.startsWith("/reg/") ||
+               path == "/registration" || path.startsWith("/registration/")
     }
 
     private fun isPageLocked(url: String): Boolean {
@@ -263,22 +408,21 @@ class MainActivity : Activity() {
     }
 
     private fun isProfilePageOrGroupUrl(u: String): Boolean {
-        if (u.contains("/groups/")) return true
-        if (u.contains("/pages/")) return true
-        if (u.contains("/profile.php")) return true
-        if (u.contains("/people/")) return true
-        val regex = Regex("facebook\\.com/([a-z0-9_.\\-]+)/?(?:[?#]|$)")
-        val match = regex.find(u)
-        if (match != null) {
-            val seg = match.groupValues[1]
-            val reserved = setOf("home.php","login.php","checkpoint","help","settings","notifications","friends","photo.php","photos.php","story.php","permalink.php","sharer.php","privacy","dialog","unified","l.php","messages","messenger","watch","reel","marketplace","search","www","m","mbasic","touch")
-            if (seg !in reserved && seg.isNotEmpty()) return true
-        }
-        return false
-    }
-
-    private fun normalizeUrl(u: String): String {
-        return u.lowercase().substringBefore("?").substringBefore("#").trimEnd('/')
+        val p = parseHttpUrl(u) ?: return false
+        if (!hostIs(p.host, "facebook.com")) return false
+        val parts = p.path.trim('/').split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return false
+        val first = parts.first().lowercase(Locale.ROOT)
+        if (first in setOf("groups","pages","profile.php","people")) return true
+        if (first.contains(".php")) return false
+        val reserved = setOf(
+            "home.php","login.php","checkpoint","help","settings","notifications","friends",
+            "photo.php","photos.php","story.php","permalink.php","sharer.php","privacy",
+            "dialog","unified","l.php","messages","messenger","watch","reel","marketplace",
+            "search","www","m","mbasic","touch","gaming","events","fundraisers","jobs",
+            "bookmarks","saved","feeds","notifications"
+        )
+        return first !in reserved
     }
 
     private fun isRefreshBlocked(url: String): Boolean {
@@ -299,13 +443,10 @@ class MainActivity : Activity() {
 
     private fun getWhitelistSet(): List<String> {
         val raw = prefs.getString("group_whitelist", "") ?: ""
-        return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        return raw.split(',', '\n', ';').map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }.distinct()
     }
 
-    private fun getListPref(key: String): List<String> {
-        val raw = prefs.getString(key, "") ?: ""
-        return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
-    }
+    private fun getListPref(key: String): List<String> = getRuleListPref(key)
 
     private fun getKeywordList(): List<String> {
         val raw = prefs.getString("keyword_blocklist", "") ?: ""
@@ -327,57 +468,74 @@ class MainActivity : Activity() {
     }
 
     private fun extractIdentifier(url: String): String? {
-        val gid = extractGroupId(url)
-        if (gid != null) return gid
-        val regex = Regex("facebook\\.com/([a-z0-9_.\\-]+)/?(?:[?#]|$)")
-        val match = regex.find(url)
-        return match?.groupValues?.get(1)
+        val p = parseHttpUrl(url) ?: return null
+        if (!isFacebookHost(p.host)) return null
+        val parts = p.path.trim('/').split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return null
+        if (parts.first().equals("groups", true)) return parts.getOrNull(1)
+        if (parts.first().equals("pages", true)) return parts.getOrNull(1)
+        return parts.first().takeIf { it !in setOf("home.php","login.php","checkpoint","help","settings","notifications","friends","photo.php","photos.php","story.php","permalink.php","sharer.php","privacy","dialog","unified","l.php","messages","messenger","watch","reel","marketplace","search","www","m","mbasic","touch") }
     }
 
     private fun handleNavigation(url: String): Boolean {
-        val u = url.lowercase()
-        val isFacebookDomain = u.contains("facebook.com") || u.contains("fbcdn.net")
+        val parsed = parseHttpUrl(url) ?: return true
+        val isFacebook = isFacebookHost(parsed.host)
 
-        if (prefs.getBoolean("custom_block_enabled", false)) {
-            val exceptions = getListPref("custom_block_exceptions")
-            val isException = exceptions.any { u.contains(it) }
-            if (!isException) {
-                val blocklist = getListPref("custom_block_domains")
-                if (blocklist.any { it.isNotEmpty() && u.contains(it) }) {
-                    runOnUiThread { Toast.makeText(this, "تم منع هذا الرابط (قائمة حظر مخصصة)", Toast.LENGTH_SHORT).show() }
+        // Authentication is deliberately outside the blocking system so the initial
+        // Facebook login/checkpoint flow is never modified by these controls.
+        if (isAuth(url)) return false
+
+        // Custom exceptions apply only to the custom block list. They do NOT disable
+        // global safety controls such as external-link blocking or profile blocking.
+        val customException = prefs.getBoolean("custom_block_enabled", false) &&
+                isExplicitCustomException(url)
+
+        if (prefs.getBoolean("custom_block_enabled", false) && !customException) {
+            val matched = getRuleListPref("custom_block_domains").firstOrNull { ruleMatches(it, url) }
+            if (matched != null) {
+                showBlockedToast("تم منع هذا الرابط (القائمة المخصصة)")
+                incrementBlockedCount()
+                return true
+            }
+        }
+
+        if (prefs.getBoolean("block_external", false) && !isFacebook) {
+            showBlockedToast("تم منع رابط خارجي")
+            incrementBlockedCount()
+            return true
+        }
+
+        if (prefs.getBoolean("block_profile_nav", false) && isFacebook && isProfilePageOrGroupUrl(url)) {
+            val id = extractIdentifier(url)
+            val whitelist = getWhitelistSet()
+            if (id == null || !whitelist.contains(id.lowercase(Locale.ROOT))) {
+                showBlockedToast("تم منع زيارة الملف الشخصي/الصفحة/المجموعة")
+                incrementBlockedCount()
+                return true
+            }
+        }
+
+        if (prefs.getBoolean("block_unjoined_groups", false) && isFacebook) {
+            val groupId = extractGroupId(url)
+            if (urlPathStartsWith(url, "/groups")) {
+                val allowed = getWhitelistSet()
+                // A groups route without a recognizable id is blocked rather than allowed.
+                if (groupId == null || !allowed.contains(groupId.lowercase(Locale.ROOT))) {
+                    showBlockedToast("مجموعة غير مسموح بها")
                     incrementBlockedCount()
                     return true
                 }
             }
         }
 
-        if (prefs.getBoolean("block_external", false) && !isFacebookDomain) {
-            runOnUiThread { Toast.makeText(this, "تم منع رابط خارجي", Toast.LENGTH_SHORT).show() }
-            incrementBlockedCount()
-            return true
-        }
-
-        if (prefs.getBoolean("block_profile_nav", false) && isFacebookDomain && !isAuth(u) && isProfilePageOrGroupUrl(u)) {
-            val id = extractIdentifier(u)
-            val whitelist = getWhitelistSet()
-            if (id == null || !whitelist.contains(id)) {
-                runOnUiThread { Toast.makeText(this, "تم منع زيارة هذا الملف الشخصي/الصفحة/المجموعة", Toast.LENGTH_SHORT).show() }
-                incrementBlockedCount()
-                return true
-            }
-        }
-
-        if (prefs.getBoolean("block_unjoined_groups", false) && u.contains("/groups/")) {
-            val groupId = extractGroupId(u)
-            val allowed = getWhitelistSet()
-            if (groupId != null && !allowed.contains(groupId)) {
-                runOnUiThread { Toast.makeText(this, "مجموعة غير مسموح بها. أضفها من الإعدادات إن أردت السماح", Toast.LENGTH_LONG).show() }
-                incrementBlockedCount()
-                return true
-            }
-        }
-
         return false
+    }
+
+    private fun urlPathStartsWith(url: String, prefix: String): Boolean {
+        val p = parseHttpUrl(url) ?: return false
+        val a = p.path.trimEnd('/').lowercase(Locale.ROOT)
+        val b = prefix.trimEnd('/').lowercase(Locale.ROOT)
+        return a == b || a.startsWith("$b/")
     }
 
     private fun redirectHomeForKeyword() {
@@ -463,9 +621,10 @@ class MainActivity : Activity() {
     }
 
     private fun extractGroupId(url: String): String? {
-        val regex = Regex("facebook\\.com/groups/([^/?&#]+)")
-        val match = regex.find(url)
-        return match?.groupValues?.get(1)
+        val p = parseHttpUrl(url) ?: return null
+        if (!hostIs(p.host, "facebook.com")) return null
+        val parts = p.path.trim('/').split('/').filter { it.isNotEmpty() }
+        return if (parts.firstOrNull()?.equals("groups", true) == true) parts.getOrNull(1) else null
     }
 
     private fun isWithinScheduledHours(): Boolean {
@@ -498,14 +657,26 @@ class MainActivity : Activity() {
 
     private fun checkAndTickUsage() {
         val limit = prefs.getInt("daily_limit_minutes", 0)
-        if (limit <= 0) return
+        if (limit <= 0) { usageLastTickMs = System.currentTimeMillis(); return }
+        val now = System.currentTimeMillis()
+        if (usageLastTickMs == 0L) usageLastTickMs = now
+        val deltaSeconds = ((now - usageLastTickMs) / 1000L).coerceAtLeast(0L).coerceAtMost(30L)
+        usageLastTickMs = now
+        if (deltaSeconds <= 0L) return
+
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val savedDate = prefs.getString("usage_date", "")
         var seconds = prefs.getInt("usage_seconds", 0)
-        if (savedDate != today) { seconds = 0; prefs.edit().putString("usage_date", today).putInt("usage_seconds", 0).apply() }
-        seconds += 60
+        if (savedDate != today) {
+            seconds = 0
+            prefs.edit().putString("usage_date", today).apply()
+        }
+        seconds += deltaSeconds.toInt()
         prefs.edit().putInt("usage_seconds", seconds).apply()
-        if (seconds >= limit * 60) { usageRunning = false; showLimitReachedScreen() }
+        if (seconds >= limit * 60) {
+            usageRunning = false
+            showLimitReachedScreen()
+        }
     }
 
     private fun checkDailyLimitExceeded(): Boolean {
@@ -677,7 +848,7 @@ class MainActivity : Activity() {
         box.addView(swVideoSwipeCombo)
 
         val swProfileNav = Switch(this); swProfileNav.text="منع زيارة أي بروفايل / صفحة / مجموعة"; swProfileNav.isChecked=prefs.getBoolean("block_profile_nav",false)
-        swProfileNav.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_profile_nav",v).apply() }
+        swProfileNav.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_profile_nav",v).apply(); if(!isAuth(web.url ?: "")) recheckCurrentPage() }
         box.addView(swProfileNav)
 
         val swTopNav = Switch(this); swTopNav.text="إخفاء القائمة العلوية لفيسبوك (أينما كانت)"; swTopNav.isChecked=prefs.getBoolean("block_top_nav",false)
@@ -689,17 +860,17 @@ class MainActivity : Activity() {
         box.addView(swFreeze)
 
         val swMediaViewer = Switch(this); swMediaViewer.text="فتح الصور والفيديوهات داخل التطبيق (منع عارض فيسبوك الخارجي بأزراره)"; swMediaViewer.isChecked=prefs.getBoolean("media_viewer",true)
-        swMediaViewer.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("media_viewer",v).apply() }
+        swMediaViewer.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("media_viewer",v).apply(); if(!isAuth(web.url ?: "")) recheckCurrentPage() }
         box.addView(swMediaViewer)
 
         val swExternal = Switch(this); swExternal.text="منع الروابط الخارجية"; swExternal.isChecked=prefs.getBoolean("block_external",false)
-        swExternal.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_external",v).apply() }
+        swExternal.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_external",v).apply(); if(!isAuth(web.url ?: "")) recheckCurrentPage() }
         box.addView(swExternal)
 
         val sepCustomBlock = TextView(this); sepCustomBlock.text="— قائمة حظر مخصصة —"; sepCustomBlock.setPadding(0,16,0,6); sepCustomBlock.setTextColor(Color.GRAY); box.addView(sepCustomBlock)
 
         val swCustomBlock = Switch(this); swCustomBlock.text="تفعيل قائمة الحظر المخصصة"; swCustomBlock.isChecked=prefs.getBoolean("custom_block_enabled",false)
-        swCustomBlock.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("custom_block_enabled",v).apply() }
+        swCustomBlock.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("custom_block_enabled",v).apply(); if(!isAuth(web.url ?: "")) recheckCurrentPage() }
         box.addView(swCustomBlock)
 
         val blockDomainsLabel = TextView(this); blockDomainsLabel.text="روابط/نطاقات للحظر (افصل بفاصلة ,) — مثال: www.facebook.com,m.facebook.com"; blockDomainsLabel.setPadding(0,8,0,4); box.addView(blockDomainsLabel)
@@ -710,19 +881,18 @@ class MainActivity : Activity() {
 
         val addCurrentExceptionBtn = TextView(this); addCurrentExceptionBtn.text="➕ إضافة الرابط الحالي إلى الاستثناءات"; addCurrentExceptionBtn.setTextColor(Color.BLUE); addCurrentExceptionBtn.setPadding(0,6,0,10)
         addCurrentExceptionBtn.setOnClickListener {
-            val currentUrl = (web.url ?: "").lowercase()
-            if (currentUrl.isNotEmpty()) {
-                val current = exceptionsInput.text.toString()
-                val list = current.split(",").map{it.trim()}.filter{it.isNotEmpty()}.toMutableList()
-                if (!list.contains(currentUrl)) list.add(currentUrl)
+            val currentUrl = normalizeUrl(web.url ?: "")
+            if (currentUrl.isNotEmpty() && currentUrl != "") {
+                val list = getRuleListFromText(exceptionsInput.text.toString()).toMutableList()
+                if (!list.any { ruleMatches(it, currentUrl) }) list.add(currentUrl)
                 exceptionsInput.setText(list.joinToString(","))
-                Toast.makeText(this,"أُضيف للاستثناءات، لا تنسَ الضغط على حفظ",Toast.LENGTH_SHORT).show()
+                Toast.makeText(this,"أُضيف للاستثناءات، اضغط حفظ",Toast.LENGTH_SHORT).show()
             }
         }
         box.addView(addCurrentExceptionBtn)
 
         val swGroups = Switch(this); swGroups.text="منع مجموعات غير مشترك فيها (استثناء يدوي)"; swGroups.isChecked=prefs.getBoolean("block_unjoined_groups",false)
-        swGroups.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_unjoined_groups",v).apply() }
+        swGroups.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_unjoined_groups",v).apply(); if(!isAuth(web.url ?: "")) recheckCurrentPage() }
         box.addView(swGroups)
 
         val whitelistLabel = TextView(this); whitelistLabel.text="قائمة المجموعات/الصفحات المسموحة (افصل بفاصلة ,)"; whitelistLabel.setPadding(0,10,0,4); box.addView(whitelistLabel)
@@ -751,11 +921,11 @@ class MainActivity : Activity() {
         val btnWordsInput = EditText(this); btnWordsInput.hint="مثال: متابعة, انضمام"; btnWordsInput.setText(prefs.getString("button_block_words","")); box.addView(btnWordsInput)
 
         val swRefresh = Switch(this); swRefresh.text="منع تحديث الصفحة بالكامل"; swRefresh.isChecked=prefs.getBoolean("block_refresh",false)
-        swRefresh.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh",v).apply() }
+        swRefresh.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
         box.addView(swRefresh)
 
         val swRefreshVideo = Switch(this); swRefreshVideo.text="منع التحديث أثناء تشغيل فيديو فقط"; swRefreshVideo.isChecked=prefs.getBoolean("block_refresh_on_video",false)
-        swRefreshVideo.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh_on_video",v).apply() }
+        swRefreshVideo.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh_on_video",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
         box.addView(swRefreshVideo)
 
         val swDark = Switch(this); swDark.text="وضع داكن إجباري"; swDark.isChecked=prefs.getBoolean("dark_mode",false)
@@ -771,7 +941,7 @@ class MainActivity : Activity() {
 
         val sepSchedule = TextView(this); sepSchedule.text="— جدولة أوقات الاستخدام —"; sepSchedule.setPadding(0,16,0,10); sepSchedule.setTextColor(Color.GRAY); box.addView(sepSchedule)
         val swSchedule = Switch(this); swSchedule.text="تفعيل الجدولة (السماح بالاستخدام في نطاق ساعات محدد فقط)"; swSchedule.isChecked=prefs.getBoolean("schedule_enabled",false)
-        swSchedule.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("schedule_enabled",v).apply() }
+        swSchedule.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("schedule_enabled",v).apply(); if(v) recheckCurrentPage() }
         box.addView(swSchedule)
         val startLabel = TextView(this); startLabel.text="من الساعة (0-23)"; startLabel.setPadding(0,8,0,4); box.addView(startLabel)
         val startInput = EditText(this); startInput.inputType = InputType.TYPE_CLASS_NUMBER; startInput.setText(prefs.getInt("schedule_start_hour",8).toString()); box.addView(startInput)
@@ -800,9 +970,9 @@ class MainActivity : Activity() {
             if (v) {
                 AlertDialog.Builder(this).setTitle("تحذير")
                     .setMessage("تعطيل JavaScript سيوقف كل خيارات الحظر الأخرى وقد يمنع فيسبوك من العمل نهائيًا. هل تريد المتابعة؟")
-                    .setPositiveButton("نعم، عطّله"){_,_-> prefs.edit().putBoolean("disable_js",true).apply(); Toast.makeText(this,"أعد تشغيل التطبيق لتفعيل التغيير",Toast.LENGTH_LONG).show() }
+                    .setPositiveButton("نعم، عطّله"){_,_-> prefs.edit().putBoolean("disable_js",true).apply(); web.settings.javaScriptEnabled = false; web.reload(); Toast.makeText(this,"تم تعطيل JavaScript وإعادة تحميل الصفحة",Toast.LENGTH_LONG).show() }
                     .setNegativeButton("إلغاء"){_,_-> swJs.isChecked=false}.show()
-            } else { prefs.edit().putBoolean("disable_js",false).apply(); Toast.makeText(this,"أعد تشغيل التطبيق لتفعيل التغيير",Toast.LENGTH_LONG).show() }
+            } else { prefs.edit().putBoolean("disable_js",false).apply(); web.settings.javaScriptEnabled = true; web.reload(); Toast.makeText(this,"تم تفعيل JavaScript، أُعيد تحميل الصفحة",Toast.LENGTH_LONG).show() }
         }
         box.addView(swJs)
 
@@ -876,9 +1046,9 @@ class MainActivity : Activity() {
             prefs.edit()
                 .putString("css",custom.text.toString())
                 .putString("js",jsBox.text.toString())
-                .putString("group_whitelist", whitelistInput.text.toString())
-                .putString("custom_block_domains", blockDomainsInput.text.toString())
-                .putString("custom_block_exceptions", exceptionsInput.text.toString())
+                .putString("group_whitelist", whitelistInput.text.toString().split(',', '\n', ';').map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }.distinct().joinToString(","))
+                .putString("custom_block_domains", saveRuleList(blockDomainsInput.text.toString()))
+                .putString("custom_block_exceptions", saveRuleList(exceptionsInput.text.toString()))
                 .putString("keyword_blocklist", keywordsInput.text.toString())
                 .putString("button_block_words", btnWordsInput.text.toString())
                 .putInt("daily_limit_minutes", limitInput.text.toString().toIntOrNull() ?: 0)
@@ -893,18 +1063,16 @@ class MainActivity : Activity() {
             // Rules just changed — re-check the page already open instead of waiting for
             // the next tap or reload to discover it's no longer allowed.
             val current = web.url ?: ""
-            if (!isAuth(current)) {
-                if (isPageLocked(current)) web.loadUrl(prefs.getString("lock_page_url", "") ?: getHomeUrl())
-                else if (handleNavigation(current)) web.loadUrl(getHomeUrl())
-            }
+            if (!isAuth(current)) recheckCurrentPage()
         }.setNegativeButton("إغلاق",null).show()
     }
 
     // "image" or "video" if this URL looks like Facebook's own photo/video viewer, else null.
     private fun detectMediaViewerUrl(url: String): String? {
-        val u = url.lowercase()
-        if (!(u.contains("facebook.com") || u.contains("fbcdn.net"))) return null
-        if (isAuth(u)) return null
+        val p = parseHttpUrl(url) ?: return null
+        if (!isFacebookHost(p.host)) return null
+        if (isAuth(url)) return null
+        val u = url.lowercase(Locale.ROOT)
         val photoPatterns = listOf("/photo.php", "/photo/", "/photos/", "fbid=")
         val videoPatterns = listOf("/videos/", "/video.php", "/reel/", "watch/?v=", "watch?v=")
         if (videoPatterns.any { u.contains(it) }) return "video"
@@ -1017,8 +1185,14 @@ class MainActivity : Activity() {
 
     private fun applyCustom(){
         if(isAuth(web.url ?: "") || !web.settings.javaScriptEnabled) return
-        val css=prefs.getString("css","")!!; val js=prefs.getString("js","")!!
-        web.evaluateJavascript("(function(){var s=document.createElement('style');s.textContent=${JSONObject.quote(css)};document.head.appendChild(s);try{${js}}catch(e){}})();",null)
+        val css = prefs.getString("css","") ?: ""
+        val js = prefs.getString("js","") ?: ""
+        val payload = "(function(){try{" +
+                "var old=document.getElementById('slim-custom-style');if(old)old.remove();" +
+                "var s=document.createElement('style');s.id='slim-custom-style';s.textContent=${JSONObject.quote(css)};document.head.appendChild(s);" +
+                js +
+                "}catch(e){}})();"
+        web.evaluateJavascript(payload, null)
         applyControls()
     }
 

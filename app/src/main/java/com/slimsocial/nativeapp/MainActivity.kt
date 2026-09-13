@@ -20,6 +20,7 @@ class MainActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var homeBtn: Button
     @Volatile private var videoPlaying = false
+    @Volatile private var scheduleBypassed = false
     private val prefs by lazy { getSharedPreferences("controls", MODE_PRIVATE) }
     private val blocks = listOf("Like / Reactions","Comments","Share","Follow / Friends","Profiles","Messenger","Stories","Reels / Watch","Search","Post creation","Upload","Marketplace","Group interactions","All buttons")
     private val arabicLabels = mapOf(
@@ -47,6 +48,7 @@ class MainActivity : Activity() {
 
     private val usageTick = object : Runnable {
         override fun run() {
+            if (!isWithinScheduledHours()) { usageRunning = false; showScheduleBlockedScreen(); return }
             checkAndTickUsage()
             if (usageRunning) usageHandler.postDelayed(this, 60000)
         }
@@ -55,10 +57,12 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); setContentView(R.layout.activity_main)
+        applyScreenshotProtection()
         web = findViewById(R.id.web)
         web.settings.javaScriptEnabled = !prefs.getBoolean("disable_js", false)
         web.settings.domStorageEnabled = true
         web.settings.userAgentString = WebSettings.getDefaultUserAgent(this).replace("; wv", "").replace("wv;", "")
+        applyCopyProtection()
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
         web.addJavascriptInterface(object {
@@ -80,6 +84,7 @@ class MainActivity : Activity() {
                     // so the WebView doesn't try to load them and show ERR_UNKNOWN_URL_SCHEME.
                     return true
                 }
+                if (isPageLocked(url)) return true
                 if (isRefreshBlocked(url)) return true
                 if (prefs.getBoolean("media_viewer", true)) {
                     val media = detectMediaViewerUrl(url)
@@ -132,6 +137,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (!isWithinScheduledHours()) { showScheduleBlockedScreen(); return }
         if (checkDailyLimitExceeded()) { showLimitReachedScreen(); return }
         usageRunning = true
         usageHandler.post(usageTick)
@@ -195,6 +201,14 @@ class MainActivity : Activity() {
         val u=url.lowercase(); return listOf("/login","/checkpoint","/recover","/reg","/registration").any { u.contains("facebook.com$it") || u.contains("facebook.com$it/") }
     }
 
+    private fun isPageLocked(url: String): Boolean {
+        if (!prefs.getBoolean("lock_page_enabled", false)) return false
+        val locked = prefs.getString("lock_page_url", "") ?: ""
+        if (locked.isEmpty()) return false
+        if (isAuth(url)) return false
+        return normalizeUrl(url) != normalizeUrl(locked)
+    }
+
     private fun incrementBlockedCount() {
         val n = prefs.getInt("blocked_count", 0)
         prefs.edit().putInt("blocked_count", n + 1).apply()
@@ -250,6 +264,15 @@ class MainActivity : Activity() {
         return raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
     }
 
+    // Built-in, toggle-controlled words — kept separate from the user's free-text field above.
+    private fun getBuiltInButtonWords(): List<String> {
+        val words = mutableListOf<String>()
+        if (prefs.getBoolean("block_message_btn", false)) {
+            words.addAll(listOf("مراسلة", "راسل", "إرسال رسالة", "Message", "Send Message"))
+        }
+        return words
+    }
+
     private fun extractIdentifier(url: String): String? {
         val gid = extractGroupId(url)
         if (gid != null) return gid
@@ -303,6 +326,11 @@ class MainActivity : Activity() {
 
     private fun handleSpaNavigation(url: String) {
         if (isAuth(url)) return
+        if (isPageLocked(url)) {
+            val lockedUrl = prefs.getString("lock_page_url", "") ?: getHomeUrl()
+            web.post { if (web.canGoBack()) web.goBack() else web.loadUrl(lockedUrl) }
+            return
+        }
         if (prefs.getBoolean("media_viewer", true)) {
             val media = detectMediaViewerUrl(url)
             if (media != null) {
@@ -340,6 +368,34 @@ class MainActivity : Activity() {
         return match?.groupValues?.get(1)
     }
 
+    private fun isWithinScheduledHours(): Boolean {
+        if (!prefs.getBoolean("schedule_enabled", false)) return true
+        if (scheduleBypassed) return true
+        val start = prefs.getInt("schedule_start_hour", 0)
+        val end = prefs.getInt("schedule_end_hour", 24)
+        if (start == end) return true
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        return if (start < end) hour in start until end else (hour >= start || hour < end)
+    }
+
+    private fun showScheduleBlockedScreen() {
+        val start = prefs.getInt("schedule_start_hour", 0)
+        val end = prefs.getInt("schedule_end_hour", 24)
+        AlertDialog.Builder(this)
+            .setTitle("غير متاح الآن")
+            .setMessage("التطبيق متاح فقط من الساعة %02d:00 إلى الساعة %02d:00.".format(start, end))
+            .setCancelable(false)
+            .setPositiveButton("إدخال كلمة المرور") { _, _ ->
+                checkPasswordThen {
+                    scheduleBypassed = true
+                    usageRunning = true
+                    usageHandler.post(usageTick)
+                }
+            }
+            .setNegativeButton("إغلاق التطبيق") { _, _ -> finish() }
+            .show()
+    }
+
     private fun checkAndTickUsage() {
         val limit = prefs.getInt("daily_limit_minutes", 0)
         if (limit <= 0) return
@@ -375,6 +431,31 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("إغلاق التطبيق") { _, _ -> finish() }
             .show()
+    }
+
+    private fun applyScreenshotProtection() {
+        if (prefs.getBoolean("block_screenshot", false)) {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    private fun applyCopyProtection() {
+        if (prefs.getBoolean("block_copy", false)) {
+            web.isLongClickable = false
+            web.setOnLongClickListener { true }
+            web.customSelectionActionModeCallback = object : ActionMode.Callback {
+                override fun onCreateActionMode(mode: ActionMode?, menu: Menu?) = false
+                override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?) = false
+                override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?) = false
+                override fun onDestroyActionMode(mode: ActionMode?) {}
+            }
+        } else {
+            web.isLongClickable = true
+            web.setOnLongClickListener(null)
+            web.customSelectionActionModeCallback = null
+        }
     }
 
     private fun checkPasswordThen(action: () -> Unit) {
@@ -424,6 +505,7 @@ class MainActivity : Activity() {
         if (prefs.getBoolean("block_videos", false)) js.append("s+='video{visibility:hidden!important;}';")
         if (prefs.getBoolean("block_video_swipe", false)) js.append("s+='video,[data-pagelet*=\\\"Reel\\\" i],[role=\\\"main\\\"] video{touch-action:none!important;}body.slim-reel-lock{touch-action:pan-x!important;overflow:hidden!important;}';")
         if (prefs.getBoolean("block_top_nav", false)) js.append("s+='[role=\\\"tablist\\\"],[role=\\\"tablist\\\"] *{visibility:hidden!important;pointer-events:none!important;}';")
+        if (prefs.getBoolean("block_copy", false)) js.append("s+='*{-webkit-user-select:none!important;user-select:none!important;}';")
         val freezePage = prefs.getBoolean("freeze_page", false)
         val imagesBlocked = prefs.getBoolean("block_images", false)
         val videosBlocked = prefs.getBoolean("block_videos", false)
@@ -452,13 +534,15 @@ class MainActivity : Activity() {
         js.append("function __slimScanKeywords(){if(!window.__slimKeywords||!window.__slimKeywords.length)return;var t=__slimNormalizeAr(document.body.innerText||'');for(var i=0;i<window.__slimKeywords.length;i++){var k=__slimNormalizeAr(window.__slimKeywords[i]);if(k&&t.indexOf(k)!==-1){if(window.SlimBridge)SlimBridge.keywordRedirect();return;}}}")
         js.append("if(!window.__slimKeywordGuard){window.__slimKeywordGuard=true;var __slimKwTimer=null;new MutationObserver(function(){clearTimeout(__slimKwTimer);__slimKwTimer=setTimeout(__slimScanKeywords,300);}).observe(document.body,{childList:true,subtree:true,characterData:true});}")
         js.append("__slimScanKeywords();")
-        val btnWords = getButtonBlockWords()
+        val btnWords = getButtonBlockWords() + getBuiltInButtonWords()
         val btnWordsJson = "[" + btnWords.joinToString(",") { JSONObject.quote(it) } + "]"
         js.append("window.__slimButtonWords=").append(btnWordsJson).append(";")
-        js.append("function __slimBtnMatch(txt){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return false;var t=__slimNormalizeAr((txt||'').trim());if(!t)return false;for(var i=0;i<window.__slimButtonWords.length;i++){var w=__slimNormalizeAr(window.__slimButtonWords[i]);if(w&&t===w)return true;}return false;}")
+        js.append("function __slimBtnMatch(txt){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return false;var t=__slimNormalizeAr((txt||'').trim());if(!t)return false;for(var i=0;i<window.__slimButtonWords.length;i++){var w=__slimNormalizeAr(window.__slimButtonWords[i]);if(w&&t.indexOf(w)!==-1)return true;}return false;}")
         js.append("function __slimScanButtonWords(){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return;var els=document.querySelectorAll('a,button,div[role=\\\"button\\\"],span[role=\\\"button\\\"],div[role=\\\"link\\\"],span[role=\\\"link\\\"]');for(var i=0;i<els.length;i++){var el=els[i];if(el.__slimBtnHidden)continue;var txt=(el.textContent||'').trim();if(txt.length>0&&txt.length<40&&__slimBtnMatch(txt)){el.style.setProperty('display','none','important');el.style.setProperty('pointer-events','none','important');el.__slimBtnHidden=true;}}}")
         js.append("if(!window.__slimBtnGuard){window.__slimBtnGuard=true;var __slimBtnTimer=null;new MutationObserver(function(){clearTimeout(__slimBtnTimer);__slimBtnTimer=setTimeout(__slimScanButtonWords,300);}).observe(document.body,{childList:true,subtree:true,characterData:true});document.addEventListener('click',function(e){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return;var el=e.target;for(var d=0;d<4&&el;d++){var txt=(el.textContent||'').trim();if(txt.length>0&&txt.length<40&&__slimBtnMatch(txt)){e.preventDefault();e.stopPropagation();el.style.setProperty('display','none','important');el.__slimBtnHidden=true;return;}el=el.parentElement;}},true);}")
         js.append("__slimScanButtonWords();")
+        js.append("window.__slimBlockCopy=").append(prefs.getBoolean("block_copy", false)).append(";")
+        js.append("if(!window.__slimCopyGuard){window.__slimCopyGuard=true;['copy','cut','contextmenu'].forEach(function(evt){document.addEventListener(evt,function(e){if(window.__slimBlockCopy){e.preventDefault();e.stopPropagation();}},true);});}")
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
     }
@@ -470,6 +554,10 @@ class MainActivity : Activity() {
         val counter = TextView(this); counter.text="المحاولات المحظورة: ${prefs.getInt("blocked_count",0)}"; counter.setPadding(0,0,0,16); box.addView(counter)
 
         blocks.forEach { name -> val sw=Switch(this); sw.text=arabicLabels[name] ?: name; sw.textSize=16f; sw.isChecked=prefs.getBoolean(name,false); sw.setPadding(0,10,0,10); sw.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean(name,v).apply(); if(!isAuth(web.url ?: "")) applyControls() }; box.addView(sw) }
+
+        val swMessageBtn = Switch(this); swMessageBtn.text="مراسلة (زر مراسلة الصفحات)"; swMessageBtn.textSize=16f; swMessageBtn.isChecked=prefs.getBoolean("block_message_btn",false); swMessageBtn.setPadding(0,10,0,10)
+        swMessageBtn.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_message_btn",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
+        box.addView(swMessageBtn)
 
         val sep1 = TextView(this); sep1.text="— خيارات إضافية —"; sep1.setPadding(0,20,0,10); sep1.setTextColor(Color.GRAY); box.addView(sep1)
 
@@ -540,7 +628,7 @@ class MainActivity : Activity() {
         val keywordsInput = EditText(this); keywordsInput.hint="مثال: كلمة1, كلمة2"; keywordsInput.setText(prefs.getString("keyword_blocklist","")); box.addView(keywordsInput)
 
         val sepBtnWords = TextView(this); sepBtnWords.text="— حظر أزرار حسب نصّها بالضبط —"; sepBtnWords.setPadding(0,16,0,10); sepBtnWords.setTextColor(Color.GRAY); box.addView(sepBtnWords)
-        val btnWordsLabel = TextView(this); btnWordsLabel.text="اكتب نص الزر كما يظهر بالضبط على الصفحة (مثل: متابعة، انضمام) — يُخفى ويُمنع النقر عليه (افصل بفاصلة ,)"; btnWordsLabel.setPadding(0,0,0,4); box.addView(btnWordsLabel)
+        val btnWordsLabel = TextView(this); btnWordsLabel.text="اكتب النص أو جزء منه كما يظهر على الزر (مثل: متابعة، انضمام) — أي عنصر نصّه يحتوي على هذه الكلمة يُخفى ويُمنع النقر عليه (افصل بفاصلة ,)"; btnWordsLabel.setPadding(0,0,0,4); box.addView(btnWordsLabel)
         val btnWordsInput = EditText(this); btnWordsInput.hint="مثال: متابعة, انضمام"; btnWordsInput.setText(prefs.getString("button_block_words","")); box.addView(btnWordsInput)
 
         val swRefresh = Switch(this); swRefresh.text="منع تحديث الصفحة بالكامل"; swRefresh.isChecked=prefs.getBoolean("block_refresh",false)
@@ -561,6 +649,29 @@ class MainActivity : Activity() {
 
         val limitLabel = TextView(this); limitLabel.text="الحد اليومي (بالدقائق، 0 = بلا حد)"; limitLabel.setPadding(0,16,0,4); box.addView(limitLabel)
         val limitInput = EditText(this); limitInput.inputType = InputType.TYPE_CLASS_NUMBER; limitInput.setText(prefs.getInt("daily_limit_minutes",0).toString()); box.addView(limitInput)
+
+        val sepSchedule = TextView(this); sepSchedule.text="— جدولة أوقات الاستخدام —"; sepSchedule.setPadding(0,16,0,10); sepSchedule.setTextColor(Color.GRAY); box.addView(sepSchedule)
+        val swSchedule = Switch(this); swSchedule.text="تفعيل الجدولة (السماح بالاستخدام في نطاق ساعات محدد فقط)"; swSchedule.isChecked=prefs.getBoolean("schedule_enabled",false)
+        swSchedule.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("schedule_enabled",v).apply() }
+        box.addView(swSchedule)
+        val startLabel = TextView(this); startLabel.text="من الساعة (0-23)"; startLabel.setPadding(0,8,0,4); box.addView(startLabel)
+        val startInput = EditText(this); startInput.inputType = InputType.TYPE_CLASS_NUMBER; startInput.setText(prefs.getInt("schedule_start_hour",8).toString()); box.addView(startInput)
+        val endLabel = TextView(this); endLabel.text="إلى الساعة (0-24)"; endLabel.setPadding(0,8,0,4); box.addView(endLabel)
+        val endInput = EditText(this); endInput.inputType = InputType.TYPE_CLASS_NUMBER; endInput.setText(prefs.getInt("schedule_end_hour",22).toString()); box.addView(endInput)
+
+        val sepPrivacy = TextView(this); sepPrivacy.text="— خصوصية إضافية —"; sepPrivacy.setPadding(0,16,0,10); sepPrivacy.setTextColor(Color.GRAY); box.addView(sepPrivacy)
+        val swCopy = Switch(this); swCopy.text="منع نسخ النصوص من الصفحة"; swCopy.isChecked=prefs.getBoolean("block_copy",false)
+        swCopy.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_copy",v).apply(); applyCopyProtection(); if(!isAuth(web.url ?: "")) applyControls() }
+        box.addView(swCopy)
+        val swScreenshot = Switch(this); swScreenshot.text="منع لقطة الشاشة وتسجيل الشاشة"; swScreenshot.isChecked=prefs.getBoolean("block_screenshot",false)
+        swScreenshot.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_screenshot",v).apply(); applyScreenshotProtection() }
+        box.addView(swScreenshot)
+        val swLockPage = Switch(this); swLockPage.text="قفل الصفحة الحالية (منع أي تنقّل خارجها فورًا، بدون أي رسالة)"; swLockPage.isChecked=prefs.getBoolean("lock_page_enabled",false)
+        swLockPage.setOnCheckedChangeListener { _,v ->
+            if (v) prefs.edit().putBoolean("lock_page_enabled",true).putString("lock_page_url", web.url ?: getHomeUrl()).apply()
+            else prefs.edit().putBoolean("lock_page_enabled",false).apply()
+        }
+        box.addView(swLockPage)
 
         val swJs = Switch(this); swJs.text="تعطيل JavaScript بالكامل ⚠️ (يعطّل باقي الخيارات ومعظم فيسبوك)"; swJs.isChecked=prefs.getBoolean("disable_js",false)
         swJs.setOnCheckedChangeListener { _,v ->
@@ -641,6 +752,8 @@ class MainActivity : Activity() {
                 .putString("keyword_blocklist", keywordsInput.text.toString())
                 .putString("button_block_words", btnWordsInput.text.toString())
                 .putInt("daily_limit_minutes", limitInput.text.toString().toIntOrNull() ?: 0)
+                .putInt("schedule_start_hour", (startInput.text.toString().toIntOrNull() ?: 0).coerceIn(0,23))
+                .putInt("schedule_end_hour", (endInput.text.toString().toIntOrNull() ?: 24).coerceIn(0,24))
                 .putString("home_url", homeUrl)
                 .apply()
             saveCustomPages(currentPages)

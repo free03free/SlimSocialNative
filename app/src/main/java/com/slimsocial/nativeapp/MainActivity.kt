@@ -66,6 +66,12 @@ class MainActivity : Activity() {
         web.webViewClient = object: WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
                 val url = r.url.toString()
+                val scheme = r.url.scheme?.lowercase() ?: ""
+                if (scheme != "http" && scheme != "https") {
+                    // Ignore app-deeplink / unsupported schemes (fb://, intent://, tel:, mailto:, etc.)
+                    // so the WebView doesn't try to load them and show ERR_UNKNOWN_URL_SCHEME.
+                    return true
+                }
                 if (isRefreshBlocked(url)) return true
                 return handleNavigation(url)
             }

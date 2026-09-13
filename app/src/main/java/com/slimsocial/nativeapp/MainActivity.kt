@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.*
 import android.content.*
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -35,11 +36,12 @@ class MainActivity : Activity() {
         "Upload" to "رفع الملفات",
         "Marketplace" to "ماركت بلايس",
         "Group interactions" to "تفاعلات المجموعات",
-        "All buttons" to "كل الأزرار"
+        "All buttons" to "كل الأزرار + منع الكتابة (وضع مشاهدة فقط)"
     )
 
     private val tapHandler = Handler(Looper.getMainLooper())
     private var tapCount = 0
+    private var lastKeywordRedirect = 0L
     private val usageHandler = Handler(Looper.getMainLooper())
     private var usageRunning = false
 
@@ -57,11 +59,17 @@ class MainActivity : Activity() {
         web.settings.javaScriptEnabled = !prefs.getBoolean("disable_js", false)
         web.settings.domStorageEnabled = true
         web.settings.userAgentString = WebSettings.getDefaultUserAgent(this).replace("; wv", "").replace("wv;", "")
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
         web.addJavascriptInterface(object {
             @android.webkit.JavascriptInterface
             fun setPlaying(playing: Boolean) { videoPlaying = playing }
             @android.webkit.JavascriptInterface
             fun checkNav(url: String) { runOnUiThread { handleSpaNavigation(url) } }
+            @android.webkit.JavascriptInterface
+            fun openMedia(type: String, url: String) { runOnUiThread { showMediaViewer(type, url) } }
+            @android.webkit.JavascriptInterface
+            fun keywordRedirect() { runOnUiThread { redirectHomeForKeyword() } }
         }, "SlimBridge")
         web.webViewClient = object: WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
@@ -73,6 +81,13 @@ class MainActivity : Activity() {
                     return true
                 }
                 if (isRefreshBlocked(url)) return true
+                if (prefs.getBoolean("media_viewer", true)) {
+                    val media = detectMediaViewerUrl(url)
+                    if (media != null) {
+                        extractMediaViaHiddenWebView(url, media)
+                        return true
+                    }
+                }
                 return handleNavigation(url)
             }
             override fun onPageFinished(v: WebView, url: String) {
@@ -126,6 +141,7 @@ class MainActivity : Activity() {
         super.onPause()
         usageRunning = false
         usageHandler.removeCallbacksAndMessages(null)
+        CookieManager.getInstance().flush()
     }
 
     private fun applyToolbarVisibility(menuBtn: View, reloadBtn: View) {
@@ -224,6 +240,16 @@ class MainActivity : Activity() {
         return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
     }
 
+    private fun getKeywordList(): List<String> {
+        val raw = prefs.getString("keyword_blocklist", "") ?: ""
+        return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+    }
+
+    private fun getButtonBlockWords(): List<String> {
+        val raw = prefs.getString("button_block_words", "") ?: ""
+        return raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
     private fun extractIdentifier(url: String): String? {
         val gid = extractGroupId(url)
         if (gid != null) return gid
@@ -265,8 +291,40 @@ class MainActivity : Activity() {
         return false
     }
 
+    private fun redirectHomeForKeyword() {
+        val now = System.currentTimeMillis()
+        if (now - lastKeywordRedirect < 3000) return // guard against repeated triggers on the same page
+        lastKeywordRedirect = now
+        incrementBlockedCount()
+        web.stopLoading()
+        web.loadUrl(getHomeUrl())
+        Toast.makeText(this, "تم إرجاعك للرئيسية (الصفحة تحتوي على كلمة محظورة)", Toast.LENGTH_SHORT).show()
+    }
+
     private fun handleSpaNavigation(url: String) {
         if (isAuth(url)) return
+        if (prefs.getBoolean("media_viewer", true)) {
+            val media = detectMediaViewerUrl(url)
+            if (media != null) {
+                // SPA route already changed under us; snap back to where we were, then show
+                // the media in our own viewer using the current (already-loaded) page's DOM.
+                val extractJs = if (media == "video")
+                    "(function(){var v=document.querySelector('video');if(v&&v.currentSrc)return v.currentSrc;if(v&&v.src)return v.src;var og=document.querySelector('meta[property=\"og:video\"],meta[property=\"og:video:secure_url\"]');return og?og.content:'';})();"
+                else
+                    "(function(){var og=document.querySelector('meta[property=\"og:image\"]');if(og&&og.content)return og.content;var img=document.querySelector('img[data-visualcompletion=\"media-vc-image\"]')||document.querySelector('[role=\"main\"] img');return img?img.src:'';})();"
+                web.evaluateJavascript(extractJs) { result ->
+                    val raw = result?.trim('"') ?: ""
+                    val mediaUrl = raw.replace("\\u002F", "/").replace("\\/", "/")
+                    if (web.canGoBack()) web.goBack()
+                    if (mediaUrl.isNotEmpty() && mediaUrl.startsWith("http")) {
+                        tapHandler.postDelayed({ showMediaViewer(media, mediaUrl) }, 150)
+                    } else {
+                        extractMediaViaHiddenWebView(url, media)
+                    }
+                }
+                return
+            }
+        }
         if (handleNavigation(url)) {
             web.post {
                 web.stopLoading()
@@ -356,16 +414,30 @@ class MainActivity : Activity() {
     private fun applyControls() {
         if (!web.settings.javaScriptEnabled) return
         val js = StringBuilder("(function(){var s='';")
-        if (prefs.getBoolean("All buttons",false)) js.append("s+='button,[role=\\\"button\\\"],input[type=button],input[type=submit]{visibility:hidden!important;pointer-events:none!important;}';")
+        val blockAllButtons = prefs.getBoolean("All buttons",false)
+        if (blockAllButtons) js.append("s+='button,[role=\\\"button\\\"],input[type=button],input[type=submit]{visibility:hidden!important;pointer-events:none!important;}';")
         val map = mapOf("Like / Reactions" to "a[href*='/reaction/'],a[href*='/ufi/reaction'],[aria-label='Like' i],[aria-label='React' i]", "Comments" to "a[href*='comment'],[aria-label*='Comment' i]", "Share" to "a[href*='share'],[aria-label*='Share' i]", "Search" to "a[href*='search'],input[placeholder*='Search' i]", "Messenger" to "a[href*='messages'],a[href*='messenger']", "Stories" to "a[href*='stories']", "Reels / Watch" to "a[href*='reel'],a[href*='watch']", "Marketplace" to "a[href*='marketplace']", "Follow / Friends" to "a[href*='/friends/'],a[href*='add_friend'],a[href*='subscribe'],a[href*='unsubscribe'],[aria-label='Follow' i],[aria-label='Add Friend' i],[aria-label*='Follow' i],[aria-label*='متابعة'],[aria-label*='إضافة صديق']")
         map.forEach { (k,sel) -> if(prefs.getBoolean(k,false)) js.append("s+=`").append(sel).append("{display:none!important;pointer-events:none!important;}`;") }
+        if (blockAllButtons) js.append("s+='textarea,[contenteditable=\\\"true\\\"],div[role=\\\"textbox\\\"]{pointer-events:none!important;opacity:0.5!important;caret-color:transparent!important;}';")
         if (prefs.getBoolean("dark_mode", false)) js.append("s+='html{filter:invert(1) hue-rotate(180deg) !important;} img,video,iframe{filter:invert(1) hue-rotate(180deg) !important;}';")
         if (prefs.getBoolean("block_images", false)) js.append("s+='img,svg image{visibility:hidden!important;}';")
         if (prefs.getBoolean("block_videos", false)) js.append("s+='video{visibility:hidden!important;}';")
         if (prefs.getBoolean("block_video_swipe", false)) js.append("s+='video,[data-pagelet*=\\\"Reel\\\" i],[role=\\\"main\\\"] video{touch-action:none!important;}body.slim-reel-lock{touch-action:pan-x!important;overflow:hidden!important;}';")
         if (prefs.getBoolean("block_top_nav", false)) js.append("s+='[role=\\\"tablist\\\"],[role=\\\"tablist\\\"] *{visibility:hidden!important;pointer-events:none!important;}';")
+        val freezePage = prefs.getBoolean("freeze_page", false)
+        val imagesBlocked = prefs.getBoolean("block_images", false)
+        val videosBlocked = prefs.getBoolean("block_videos", false)
+        if (freezePage) {
+            js.append("s+='body *{pointer-events:none!important;}';")
+            if (!imagesBlocked) js.append("s+='img,svg image{pointer-events:auto!important;}';")
+            if (!videosBlocked) js.append("s+='video{pointer-events:auto!important;}';")
+        }
         js.append("var st=document.getElementById('slimstyle-tag')||document.createElement('style');st.id='slimstyle-tag';st.textContent=s;document.head.appendChild(st);")
         js.append("if(/\\/(reel|watch)/i.test(location.pathname)){document.body.classList.add('slim-reel-lock');}else{document.body.classList.remove('slim-reel-lock');}")
+        js.append("window.__slimVisitorMode=").append(blockAllButtons || freezePage).append(";")
+        js.append("function __slimLockInputs(){if(!window.__slimVisitorMode)return;document.querySelectorAll('textarea,div[role=\\\"textbox\\\"]').forEach(function(el){try{el.setAttribute('readonly','readonly');el.setAttribute('disabled','disabled');}catch(e){}});document.querySelectorAll('[contenteditable=\\\"true\\\"]').forEach(function(el){try{el.setAttribute('contenteditable','false');}catch(e){}});}")
+        js.append("__slimLockInputs();")
+        js.append("if(!window.__slimInputGuard){window.__slimInputGuard=true;new MutationObserver(__slimLockInputs).observe(document.body,{childList:true,subtree:true});document.addEventListener('keydown',function(e){if(window.__slimVisitorMode&&e.key==='Enter'){var t=e.target;if(t&&(t.tagName==='TEXTAREA'||t.isContentEditable||t.getAttribute('role')==='textbox')){e.preventDefault();e.stopPropagation();}}},true);}")
         js.append("if(!window.__slimSwipeGuard){window.__slimSwipeGuard=true;document.addEventListener('touchmove',function(e){if(window.__slimBlockSwipe){var onReelPage=/\\/(reel|watch)/i.test(location.pathname);var t=e.target.closest('video,[data-pagelet*=\\\"Reel\\\" i],[aria-label*=\\\"Reel\\\" i],[role=\\\"main\\\"] video');if(t||onReelPage){e.preventDefault();}}},{passive:false});}")
         js.append("window.__slimBlockSwipe=").append(prefs.getBoolean("block_video_swipe", false)).append(";")
         js.append("if(!window.__slimVideoTracker){window.__slimVideoTracker=true;function slimHook(v){if(v.__slimHooked)return;v.__slimHooked=true;v.addEventListener('play',function(){if(window.SlimBridge)SlimBridge.setPlaying(true);window.__slimVideoPlaying=true;});v.addEventListener('pause',function(){if(window.SlimBridge)SlimBridge.setPlaying(false);window.__slimVideoPlaying=false;});v.addEventListener('ended',function(){if(window.SlimBridge)SlimBridge.setPlaying(false);window.__slimVideoPlaying=false;});}document.querySelectorAll('video').forEach(slimHook);new MutationObserver(function(){document.querySelectorAll('video').forEach(slimHook);}).observe(document.body,{childList:true,subtree:true});}")
@@ -373,6 +445,20 @@ class MainActivity : Activity() {
         js.append("if(!window.__slimReloadGuard){window.__slimReloadGuard=true;try{var _rl=location.reload.bind(location);location.reload=function(){if(window.__slimBlockRefresh){if(window.SlimBridge)SlimBridge.checkNav(location.href);return;}_rl();};}catch(e){}try{var _go=history.go.bind(history);history.go=function(n){if((n===0||n===undefined)&&window.__slimBlockRefresh){return;}_go(n);};}catch(e){}}")
         js.append("if(!window.__slimPullGuard){window.__slimPullGuard=true;var __slimStartY=0;document.addEventListener('touchstart',function(e){__slimStartY=e.touches[0].clientY;},{passive:true,capture:true});document.addEventListener('touchmove',function(e){var blocked=window.__slimBlockRefresh||(window.__slimBlockRefreshOnVideo&&window.__slimVideoPlaying);if(blocked&&window.scrollY<=2&&e.touches[0].clientY>__slimStartY+3){e.preventDefault();}},{passive:false,capture:true});}")
         js.append("if(!window.__slimSpaGuard){window.__slimSpaGuard=true;window.__slimLastUrl=location.href;function slimCheckSpa(){if(location.href!==window.__slimLastUrl){window.__slimLastUrl=location.href;if(window.SlimBridge)SlimBridge.checkNav(location.href);}}var _ps=history.pushState;history.pushState=function(){_ps.apply(history,arguments);slimCheckSpa();};var _rs=history.replaceState;history.replaceState=function(){_rs.apply(history,arguments);slimCheckSpa();};window.addEventListener('popstate',slimCheckSpa);setInterval(slimCheckSpa,600);}")
+        val keywords = getKeywordList()
+        val kwJson = "[" + keywords.joinToString(",") { JSONObject.quote(it) } + "]"
+        js.append("window.__slimKeywords=").append(kwJson).append(";")
+        js.append("function __slimNormalizeAr(s){return (s||'').replace(/[\\u064B-\\u065F\\u0670]/g,'').replace(/[\\u0622\\u0623\\u0625]/g,'\\u0627').replace(/\\u0649/g,'\\u064A').replace(/\\u0629/g,'\\u0647').replace(/\\u0624/g,'\\u0648').replace(/\\u0626/g,'\\u064A').toLowerCase();}")
+        js.append("function __slimScanKeywords(){if(!window.__slimKeywords||!window.__slimKeywords.length)return;var t=__slimNormalizeAr(document.body.innerText||'');for(var i=0;i<window.__slimKeywords.length;i++){var k=__slimNormalizeAr(window.__slimKeywords[i]);if(k&&t.indexOf(k)!==-1){if(window.SlimBridge)SlimBridge.keywordRedirect();return;}}}")
+        js.append("if(!window.__slimKeywordGuard){window.__slimKeywordGuard=true;var __slimKwTimer=null;new MutationObserver(function(){clearTimeout(__slimKwTimer);__slimKwTimer=setTimeout(__slimScanKeywords,300);}).observe(document.body,{childList:true,subtree:true,characterData:true});}")
+        js.append("__slimScanKeywords();")
+        val btnWords = getButtonBlockWords()
+        val btnWordsJson = "[" + btnWords.joinToString(",") { JSONObject.quote(it) } + "]"
+        js.append("window.__slimButtonWords=").append(btnWordsJson).append(";")
+        js.append("function __slimBtnMatch(txt){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return false;var t=__slimNormalizeAr((txt||'').trim());if(!t)return false;for(var i=0;i<window.__slimButtonWords.length;i++){var w=__slimNormalizeAr(window.__slimButtonWords[i]);if(w&&t===w)return true;}return false;}")
+        js.append("function __slimScanButtonWords(){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return;var els=document.querySelectorAll('a,button,div[role=\\\"button\\\"],span[role=\\\"button\\\"],div[role=\\\"link\\\"],span[role=\\\"link\\\"]');for(var i=0;i<els.length;i++){var el=els[i];if(el.__slimBtnHidden)continue;var txt=(el.textContent||'').trim();if(txt.length>0&&txt.length<40&&__slimBtnMatch(txt)){el.style.setProperty('display','none','important');el.style.setProperty('pointer-events','none','important');el.__slimBtnHidden=true;}}}")
+        js.append("if(!window.__slimBtnGuard){window.__slimBtnGuard=true;var __slimBtnTimer=null;new MutationObserver(function(){clearTimeout(__slimBtnTimer);__slimBtnTimer=setTimeout(__slimScanButtonWords,300);}).observe(document.body,{childList:true,subtree:true,characterData:true});document.addEventListener('click',function(e){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return;var el=e.target;for(var d=0;d<4&&el;d++){var txt=(el.textContent||'').trim();if(txt.length>0&&txt.length<40&&__slimBtnMatch(txt)){e.preventDefault();e.stopPropagation();el.style.setProperty('display','none','important');el.__slimBtnHidden=true;return;}el=el.parentElement;}},true);}")
+        js.append("__slimScanButtonWords();")
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
     }
@@ -416,6 +502,14 @@ class MainActivity : Activity() {
         swTopNav.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_top_nav",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
         box.addView(swTopNav)
 
+        val swFreeze = Switch(this); swFreeze.text="تجميد الصفحة بالكامل (تمرير فقط + فتح الصور/الفيديوهات المسموحة)"; swFreeze.isChecked=prefs.getBoolean("freeze_page",false)
+        swFreeze.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("freeze_page",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
+        box.addView(swFreeze)
+
+        val swMediaViewer = Switch(this); swMediaViewer.text="فتح الصور والفيديوهات داخل التطبيق (منع عارض فيسبوك الخارجي بأزراره)"; swMediaViewer.isChecked=prefs.getBoolean("media_viewer",true)
+        swMediaViewer.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("media_viewer",v).apply() }
+        box.addView(swMediaViewer)
+
         val swExternal = Switch(this); swExternal.text="منع الروابط الخارجية"; swExternal.isChecked=prefs.getBoolean("block_external",false)
         swExternal.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_external",v).apply() }
         box.addView(swExternal)
@@ -440,6 +534,14 @@ class MainActivity : Activity() {
             } else Toast.makeText(this,"لا يمكن التعرف على هذه الصفحة",Toast.LENGTH_SHORT).show()
         }
         box.addView(allowGroupBtn)
+
+        val sepKeywords = TextView(this); sepKeywords.text="— كلمات تُعيد التوجيه للرئيسية فورًا —"; sepKeywords.setPadding(0,16,0,10); sepKeywords.setTextColor(Color.GRAY); box.addView(sepKeywords)
+        val keywordsLabel = TextView(this); keywordsLabel.text="إذا ظهرت أي من هذه الكلمات في نص الصفحة، يتم الرجوع للرئيسية تلقائيًا (افصل بفاصلة ,)"; keywordsLabel.setPadding(0,0,0,4); box.addView(keywordsLabel)
+        val keywordsInput = EditText(this); keywordsInput.hint="مثال: كلمة1, كلمة2"; keywordsInput.setText(prefs.getString("keyword_blocklist","")); box.addView(keywordsInput)
+
+        val sepBtnWords = TextView(this); sepBtnWords.text="— حظر أزرار حسب نصّها بالضبط —"; sepBtnWords.setPadding(0,16,0,10); sepBtnWords.setTextColor(Color.GRAY); box.addView(sepBtnWords)
+        val btnWordsLabel = TextView(this); btnWordsLabel.text="اكتب نص الزر كما يظهر بالضبط على الصفحة (مثل: متابعة، انضمام) — يُخفى ويُمنع النقر عليه (افصل بفاصلة ,)"; btnWordsLabel.setPadding(0,0,0,4); box.addView(btnWordsLabel)
+        val btnWordsInput = EditText(this); btnWordsInput.hint="مثال: متابعة, انضمام"; btnWordsInput.setText(prefs.getString("button_block_words","")); box.addView(btnWordsInput)
 
         val swRefresh = Switch(this); swRefresh.text="منع تحديث الصفحة بالكامل"; swRefresh.isChecked=prefs.getBoolean("block_refresh",false)
         swRefresh.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh",v).apply() }
@@ -536,12 +638,129 @@ class MainActivity : Activity() {
                 .putString("css",custom.text.toString())
                 .putString("js",jsBox.text.toString())
                 .putString("group_whitelist", whitelistInput.text.toString())
+                .putString("keyword_blocklist", keywordsInput.text.toString())
+                .putString("button_block_words", btnWordsInput.text.toString())
                 .putInt("daily_limit_minutes", limitInput.text.toString().toIntOrNull() ?: 0)
                 .putString("home_url", homeUrl)
                 .apply()
             saveCustomPages(currentPages)
             applyCustom()
         }.setNegativeButton("إغلاق",null).show()
+    }
+
+    // "image" or "video" if this URL looks like Facebook's own photo/video viewer, else null.
+    private fun detectMediaViewerUrl(url: String): String? {
+        val u = url.lowercase()
+        if (!(u.contains("facebook.com") || u.contains("fbcdn.net"))) return null
+        if (isAuth(u)) return null
+        val photoPatterns = listOf("/photo.php", "/photo/", "/photos/", "fbid=")
+        val videoPatterns = listOf("/videos/", "/video.php", "/reel/", "watch/?v=", "watch?v=")
+        if (videoPatterns.any { u.contains(it) }) return "video"
+        if (photoPatterns.any { u.contains(it) }) return "image"
+        return null
+    }
+
+    // Loads the viewer URL in an off-screen WebView just long enough to pull the direct
+    // media src out of the DOM, then shows it in our own minimal viewer. The hidden WebView
+    // never becomes visible, so Facebook's like/comment/share/nav chrome is never shown.
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun extractMediaViaHiddenWebView(url: String, type: String) {
+        val hidden = WebView(this)
+        hidden.settings.javaScriptEnabled = true
+        hidden.settings.userAgentString = web.settings.userAgentString
+        hidden.visibility = View.GONE
+        (findViewById<View>(android.R.id.content) as ViewGroup).addView(hidden, 0, 0)
+
+        var finished = false
+        fun cleanup() { (hidden.parent as? ViewGroup)?.removeView(hidden); hidden.destroy() }
+        val timeoutRunnable = Runnable {
+            if (!finished) {
+                finished = true
+                cleanup()
+                Toast.makeText(this, "تعذّر فتح هذه الصورة/الفيديو داخل التطبيق", Toast.LENGTH_SHORT).show()
+            }
+        }
+        tapHandler.postDelayed(timeoutRunnable, 8000)
+
+        hidden.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean = false
+            override fun onPageFinished(v: WebView, pageUrl: String) {
+                if (finished) return
+                val extractJs = if (type == "video")
+                    "(function(){var v=document.querySelector('video');if(v&&v.currentSrc)return v.currentSrc;if(v&&v.src)return v.src;var og=document.querySelector('meta[property=\"og:video\"],meta[property=\"og:video:secure_url\"]');return og?og.content:'';})();"
+                else
+                    "(function(){var og=document.querySelector('meta[property=\"og:image\"]');if(og&&og.content)return og.content;var img=document.querySelector('img[data-visualcompletion=\"media-vc-image\"]')||document.querySelector('[role=\"main\"] img');return img?img.src:'';})();"
+                v.evaluateJavascript(extractJs) { result ->
+                    if (finished) return@evaluateJavascript
+                    finished = true
+                    tapHandler.removeCallbacks(timeoutRunnable)
+                    val raw = result?.trim('"') ?: ""
+                    val mediaUrl = raw.replace("\\u002F", "/").replace("\\/", "/")
+                    cleanup()
+                    if (mediaUrl.isNotEmpty() && mediaUrl.startsWith("http")) {
+                        showMediaViewer(type, mediaUrl)
+                    } else {
+                        Toast.makeText(this@MainActivity, "تعذّر فتح هذه الصورة/الفيديو داخل التطبيق", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        hidden.loadUrl(url)
+    }
+
+    // Minimal in-app viewer: one media item, one close button. No like/comment/share/nav chrome.
+    private fun showMediaViewer(type: String, url: String) {
+        val container = FrameLayout(this)
+        container.setBackgroundColor(Color.BLACK)
+
+        if (type == "video") {
+            val videoView = VideoView(this)
+            val controller = MediaController(this)
+            controller.setAnchorView(videoView)
+            videoView.setMediaController(controller)
+            videoView.setVideoURI(Uri.parse(url))
+            videoView.setOnPreparedListener { it.start() }
+            videoView.setOnErrorListener { _, _, _ ->
+                Toast.makeText(this, "تعذّر تشغيل الفيديو", Toast.LENGTH_SHORT).show(); true
+            }
+            container.addView(videoView, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        } else {
+            @SuppressLint("SetJavaScriptEnabled")
+            val imgView = WebView(this)
+            imgView.settings.javaScriptEnabled = false
+            imgView.settings.builtInZoomControls = true
+            imgView.settings.displayZoomControls = false
+            imgView.settings.useWideViewPort = true
+            imgView.settings.loadWithOverviewMode = true
+            imgView.setBackgroundColor(Color.BLACK)
+            imgView.isLongClickable = false
+            imgView.setOnLongClickListener { true } // block Facebook/Android's save/share context menu
+            val safeUrl = JSONObject.quote(url)
+            val html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>" +
+                "<style>html,body{margin:0;background:#000;height:100%;display:flex;align-items:center;justify-content:center;} img{max-width:100%;height:auto;}</style>" +
+                "</head><body><img src=$safeUrl oncontextmenu='return false;'></body></html>"
+            imgView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            container.addView(imgView, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+
+        val closeBtn = TextView(this)
+        closeBtn.text = "✕"
+        closeBtn.setTextColor(Color.WHITE)
+        closeBtn.textSize = 22f
+        closeBtn.setPadding(28, 20, 28, 20)
+        val closeParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END)
+        closeParams.topMargin = 24; closeParams.rightMargin = 24
+        container.addView(closeBtn, closeParams)
+
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.setContentView(container)
+        closeBtn.setOnClickListener { dialog.dismiss() }
+        dialog.setOnDismissListener {
+            (container.getChildAt(0) as? VideoView)?.stopPlayback()
+        }
+        dialog.show()
     }
 
     private fun applyCustom(){

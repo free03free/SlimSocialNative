@@ -496,7 +496,7 @@ class MainActivity : Activity() {
         if (prefs.getBoolean("dark_mode", false)) js.append("s+='html{filter:invert(1) hue-rotate(180deg) !important;} img,video,iframe{filter:invert(1) hue-rotate(180deg) !important;}';")
         if (prefs.getBoolean("block_images", false)) js.append("s+='img,svg image{visibility:hidden!important;}';")
         if (prefs.getBoolean("block_videos", false)) js.append("s+='video{visibility:hidden!important;}';")
-        if (prefs.getBoolean("block_join_group", false)) js.append("s+='[aria-label=\\"Join Group\\" i],[aria-label*=\\"Join Group\\" i],[aria-label*=\\"انضمام\\"],div[role=\\"button\\"][aria-label*=\\"انضم\\"]{display:none!important;pointer-events:none!important;}';")
+        if (prefs.getBoolean("block_join_group", false)) js.append("s+=`[aria-label='Join Group' i],[aria-label*='Join Group' i],[aria-label*='انضمام'],div[role='button'][aria-label*='انضم']{display:none!important;pointer-events:none!important;}`;")
         if (prefs.getBoolean("block_video_swipe", false)) js.append("s+='video,[data-pagelet*=\\\"Reel\\\" i],[role=\\\"main\\\"] video{touch-action:none!important;}body.slim-reel-lock{touch-action:pan-x!important;overflow:hidden!important;}';")
         if (prefs.getBoolean("block_top_nav", false)) js.append("s+='[role=\\\"tablist\\\"],[role=\\\"tablist\\\"] *{visibility:hidden!important;pointer-events:none!important;}';")
         if (prefs.getBoolean("block_copy", false)) js.append("s+='*{-webkit-user-select:none!important;user-select:none!important;}';")

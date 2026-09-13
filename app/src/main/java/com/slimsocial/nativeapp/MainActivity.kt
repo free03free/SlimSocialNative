@@ -44,6 +44,8 @@ class MainActivity : Activity() {
     private var tapCount = 0
     private var lastKeywordRedirect = 0L
     private var lastBlockedRedirect = 0L
+    @Volatile private var blockedNavigationUrl: String? = null
+    @Volatile private var blockedNavigationGeneration: Long = 0L
     private var blockedPageBaseUrl: String? = null
     private var restrictedCustomPageUrl: String? = null
     private val usageHandler = Handler(Looper.getMainLooper())
@@ -74,20 +76,21 @@ class MainActivity : Activity() {
             @android.webkit.JavascriptInterface
             fun checkNav(url: String) { runOnUiThread { handleSpaNavigation(url) } }
             @android.webkit.JavascriptInterface
-            fun openMedia(type: String, url: String, origin: String) {
-                runOnUiThread {
-                    // Never trust JavaScript alone. Media exceptions are valid only when
-                    // the request originates from the exact restricted page and the
-                    // requested media type is explicitly enabled.
-                    val current = web.url ?: ""
-                    val media = detectMediaViewerUrl(url)
-                    val originOk = restrictedCustomPageUrl != null &&
-                        normalizeUrl(origin) == restrictedCustomPageUrl &&
-                        normalizeUrl(current) == restrictedCustomPageUrl
-                    if (originOk && media == type && isMediaExceptionAllowed(origin, type)) {
-                        showMediaViewer(type, url)
-                    }
+            fun openMedia(type: String, url: String, origin: String): Boolean {
+                // This bridge is the ONLY media-exception gate. It validates the exact
+                // restricted-page origin and the native media classification before any
+                // viewer is opened. Returning true lets the page's click handler cancel
+                // the navigation; arbitrary SPA URL changes never receive this permission.
+                val current = web.url ?: ""
+                val media = detectMediaViewerUrl(url)
+                val originOk = restrictedCustomPageUrl != null &&
+                    normalizeUrl(origin) == restrictedCustomPageUrl &&
+                    normalizeUrl(current) == restrictedCustomPageUrl
+                val allowed = originOk && media == type && isMediaExceptionAllowed(origin, type)
+                if (allowed) {
+                    runOnUiThread { showMediaViewer(type, url) }
                 }
+                return allowed
             }
             @android.webkit.JavascriptInterface
             fun keywordRedirect() { runOnUiThread { redirectHomeForKeyword() } }
@@ -121,9 +124,12 @@ class MainActivity : Activity() {
                 }
                 if (isPageLocked(url)) return true
                 if (isRefreshBlocked(url)) return true
-                if (prefs.getBoolean("media_viewer", true)) {
+                // IMPORTANT: a restricted page never grants navigation permission to a
+                // media-looking URL. Media exceptions are opened only through the validated
+                // SlimBridge.openMedia() path, so repeated taps cannot turn into navigation.
+                if (restrictedCustomPageUrl == null && prefs.getBoolean("media_viewer", true)) {
                     val media = detectMediaViewerUrl(url)
-                    if (media != null && isMediaExceptionAllowed(web.url ?: "", media)) {
+                    if (media != null) {
                         extractMediaViaHiddenWebView(url, media)
                         return true
                     }
@@ -134,14 +140,6 @@ class MainActivity : Activity() {
             // going through shouldOverrideUrlLoading above (e.g. a server-side redirect chain
             // or a WebView-version quirk), catch it here too before content renders.
             override fun onPageStarted(v: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                if (restrictedCustomPageUrl != null && normalizeUrl(url) != restrictedCustomPageUrl) {
-                    // Keep the origin only for a media route; any other destination ends
-                    // the media-only session immediately.
-                    if (detectMediaViewerUrl(url) == null) {
-                        restrictedCustomPageUrl = null
-                        blockedPageBaseUrl = null
-                    }
-                }
                 if (isAuth(url)) return
                 if (!isWithinScheduledHours()) { usageRunning = false; v.stopLoading(); runOnUiThread { showScheduleBlockedScreen() }; return }
                 if (checkDailyLimitExceeded()) { usageRunning = false; v.stopLoading(); runOnUiThread { showLimitReachedScreen() }; return }
@@ -153,7 +151,12 @@ class MainActivity : Activity() {
                 }
                 if (handleNavigation(url)) {
                     v.stopLoading()
-                    v.post { v.loadUrl(getHomeUrl()) }
+                    val generation = blockedNavigationGeneration
+                    v.post {
+                        if (generation == blockedNavigationGeneration) {
+                            v.loadUrl(getHomeUrl())
+                        }
+                    }
                 }
             }
             override fun onPageFinished(v: WebView, url: String) {
@@ -185,7 +188,7 @@ class MainActivity : Activity() {
             text = "🏠"
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener { web.loadUrl(getHomeUrl()) }
+            setOnClickListener { clearRestrictedSession(); web.loadUrl(getHomeUrl()) }
             setOnLongClickListener { showPagesChooser(); true }
         }
         (reloadBtn.parent as? ViewGroup)?.addView(homeBtn)
@@ -264,7 +267,7 @@ class MainActivity : Activity() {
         val names = pages.map { it.first }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("انتقل إلى صفحة")
-            .setItems(names) { _, which -> web.loadUrl(pages[which].second) }
+            .setItems(names) { _, which -> clearRestrictedSession(); web.loadUrl(pages[which].second) }
             .setNegativeButton("إلغاء", null)
             .show()
     }
@@ -387,16 +390,23 @@ class MainActivity : Activity() {
 
     private fun handleNavigation(url: String): Boolean {
         val u = normalizeUrl(url)
+        if (u.isEmpty()) return true
         val isFacebookDomain = isFacebookHost(url)
 
-        // A restricted custom-block page is a media-only sandbox.
-        // Only the explicitly enabled media route may leave it; every other route,
-        // including profiles, people, pages and groups, is still checked/blocked.
+        // ABSOLUTE RULE: once a destination is rejected, every repeated attempt to the
+        // same destination is rejected again. Never rely on timing/debounce to enforce a block.
+        val previouslyBlocked = blockedNavigationUrl
+        if (previouslyBlocked != null && u == previouslyBlocked) {
+            incrementBlockedCount()
+            return true
+        }
+
+        // A restricted custom-block page is a media-only sandbox. It is never a general
+        // navigation exception. Only the native, origin-validated media bridge can open media.
         val restricted = restrictedCustomPageUrl
-        if (restricted != null && normalizeUrl(web.url ?: "") == restricted &&
-            normalizeUrl(url) != restricted) {
-            val media = detectMediaViewerUrl(url)
-            if (media != null && isMediaExceptionAllowed(web.url ?: "", media)) return false
+        if (restricted != null && u != restricted) {
+            blockedNavigationUrl = u
+            blockedNavigationGeneration++
             notifyUserFromAnyThread("تم منع التنقل من الصفحة المحظورة")
             incrementBlockedCount()
             return true
@@ -411,10 +421,13 @@ class MainActivity : Activity() {
                     val allowImages = prefs.getBoolean("custom_block_allow_images", false)
                     val allowVideos = prefs.getBoolean("custom_block_allow_videos", false)
                     if (allowImages || allowVideos) {
-                        restrictedCustomPageUrl = normalizeUrl(url)
-                        blockedPageBaseUrl = normalizeUrl(url)
+                        // The page itself may be shown, but it becomes a media-only sandbox.
+                        restrictedCustomPageUrl = u
+                        blockedPageBaseUrl = u
+                        blockedNavigationUrl = null
                     } else {
-                        blockedPageBaseUrl = normalizeUrl(url)
+                        blockedNavigationUrl = u
+                        blockedNavigationGeneration++
                         notifyUserFromAnyThread("تم منع هذا الرابط (قائمة حظر مخصصة)")
                         incrementBlockedCount()
                         return true
@@ -424,6 +437,8 @@ class MainActivity : Activity() {
         }
 
         if (prefs.getBoolean("block_external", false) && !isFacebookDomain) {
+            blockedNavigationUrl = u
+            blockedNavigationGeneration++
             notifyUserFromAnyThread("تم منع رابط خارجي")
             incrementBlockedCount()
             return true
@@ -434,6 +449,8 @@ class MainActivity : Activity() {
             val id = extractIdentifier(url.lowercase())
             val whitelist = getWhitelistSet()
             if (id == null || !whitelist.contains(id)) {
+                blockedNavigationUrl = u
+                blockedNavigationGeneration++
                 notifyUserFromAnyThread("تم منع زيارة هذا الملف الشخصي/الصفحة/المجموعة")
                 incrementBlockedCount()
                 return true
@@ -444,12 +461,16 @@ class MainActivity : Activity() {
             val groupId = extractGroupId(url.lowercase())
             val allowed = getWhitelistSet()
             if (groupId != null && !allowed.contains(groupId)) {
+                blockedNavigationUrl = u
+                blockedNavigationGeneration++
                 notifyUserFromAnyThread("مجموعة غير مسموح بها. أضفها من الإعدادات إن أردت السماح", Toast.LENGTH_LONG)
                 incrementBlockedCount()
                 return true
             }
         }
 
+        // A permitted navigation starts a new route; don't carry a stale rejection into it.
+        if (blockedNavigationUrl != u) blockedNavigationUrl = null
         return false
     }
 
@@ -487,6 +508,16 @@ class MainActivity : Activity() {
         else prefs.getBoolean("custom_block_allow_videos", false)
     }
 
+    // A media-exception page is a locked session. Navigation can leave it only through
+    // explicit app UI (Home/pages chooser) or by closing/reloading the app. A WebView
+    // history/SPA change must never be able to clear this state.
+    private fun clearRestrictedSession() {
+        restrictedCustomPageUrl = null
+        blockedPageBaseUrl = null
+        blockedNavigationUrl = null
+        blockedNavigationGeneration++
+    }
+
     private fun redirectHomeForKeyword() {
         val now = System.currentTimeMillis()
         if (now - lastKeywordRedirect < 3000) return // guard against repeated triggers on the same page
@@ -504,9 +535,9 @@ class MainActivity : Activity() {
     //    real page load (hard block) instead of leaving the content visible.
     // Debounced so a misbehaving SPA polling the same blocked URL doesn't spam toasts.
     private fun enforceLeave(blockedUrl: String, useBack: Boolean, fallbackUrl: String, message: String) {
-        val now = System.currentTimeMillis()
-        if (now - lastBlockedRedirect < 1500) return
-        lastBlockedRedirect = now
+        lastBlockedRedirect = System.currentTimeMillis()
+        blockedNavigationUrl = normalizeUrl(blockedUrl)
+        blockedNavigationGeneration++
         web.evaluateJavascript(
             "(function(){var o=document.getElementById('slim-block-overlay')||document.createElement('div');o.id='slim-block-overlay';o.style.cssText='position:fixed;inset:0;background:#000;z-index:2147483647;';document.documentElement.appendChild(o);})();",
             null
@@ -533,41 +564,9 @@ class MainActivity : Activity() {
         if (!isWithinScheduledHours()) { usageRunning = false; runOnUiThread { showScheduleBlockedScreen() }; return }
         if (checkDailyLimitExceeded()) { usageRunning = false; runOnUiThread { showLimitReachedScreen() }; return }
 
-        // Do not let a media-looking SPA route bypass the navigation firewall.
-        // It is handled only as a media exception when the previous state proves that
-        // this route came from the exact restricted page.
-        val media = if (prefs.getBoolean("media_viewer", true)) detectMediaViewerUrl(url) else null
-        val restricted = restrictedCustomPageUrl
-        if (media != null && restricted != null) {
-            val previousRestrictedPage = restricted
-            val allowedType = if (media == "image")
-                prefs.getBoolean("custom_block_allow_images", false)
-            else
-                prefs.getBoolean("custom_block_allow_videos", false)
-
-            if (allowedType) {
-                // The SPA URL is already current, so extract media from the DOM only;
-                // do not grant any navigation permission to the new route.
-                val extractJs = if (media == "video")
-                    """(function(){var v=document.querySelector('video');if(v&&v.currentSrc)return v.currentSrc;if(v&&v.src)return v.src;var og=document.querySelector("meta[property='og:video'],meta[property='og:video:secure_url']");return og?og.content:'';})();"""
-                else
-                    """(function(){var og=document.querySelector("meta[property='og:image']");if(og&&og.content)return og.content;var img=document.querySelector("img[data-visualcompletion='media-vc-image']")||document.querySelector("[role='main'] img");return img?img.src:'';})();"""
-
-                web.evaluateJavascript(extractJs) { result ->
-                    val raw = result?.trim('"') ?: ""
-                    val mediaUrl = raw.replace("\\u002F", "/").replace("\\/", "/")
-                    if (normalizeUrl(web.url ?: "") != previousRestrictedPage && web.canGoBack()) {
-                        web.goBack()
-                    }
-                    if (mediaUrl.isNotEmpty() && mediaUrl.startsWith("http")) {
-                        tapHandler.postDelayed({ showMediaViewer(media, mediaUrl) }, 150)
-                    } else {
-                        extractMediaViaHiddenWebView(url, media)
-                    }
-                }
-                return
-            }
-        }
+        // NEVER authorize a SPA route as a media exception. A SPA route is navigation,
+        // not a trusted media request. Media exceptions are handled only by the native
+        // bridge after it proves the exact restricted-page origin.
 
         // Every non-media SPA route goes through the same firewall as normal links.
         if (isPageLocked(url)) {
@@ -761,6 +760,12 @@ class MainActivity : Activity() {
         js.append("__slimScanButtonWords();")
         js.append("window.__slimBlockCopy=").append(prefs.getBoolean("block_copy", false)).append(";")
         js.append("if(!window.__slimCopyGuard){window.__slimCopyGuard=true;['copy','cut','contextmenu'].forEach(function(evt){document.addEventListener(evt,function(e){if(window.__slimBlockCopy){e.preventDefault();e.stopPropagation();}},true);});}")
+        if (restrictedCustomPageUrl != null) {
+            // Capture media links BEFORE Facebook's SPA router changes location. The native
+            // bridge decides whether the exact href is an allowed image/video. If it is not,
+            // the click is left alone and the SPA/navigation firewall will block it.
+            js.append("if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a||!window.SlimBridge)return;var h=a.href||'';var p='';try{p=new URL(h,location.href).pathname.toLowerCase();}catch(x){return;}var q='';try{q=new URL(h,location.href).search.toLowerCase();}catch(x){}var type=null;if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||q.indexOf('fbid=')!==-1)type='image';else if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/reel/')===0||p==='/watch'||(q.indexOf('v=')!==-1&&(p==='/watch'||p==='/video.php')))type='video';if(type&&SlimBridge.openMedia(type,h,location.href)){e.preventDefault();e.stopPropagation();}},true);}")
+        }
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
     }

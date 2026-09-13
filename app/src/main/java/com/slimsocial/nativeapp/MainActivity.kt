@@ -44,6 +44,8 @@ class MainActivity : Activity() {
     private var tapCount = 0
     private var lastKeywordRedirect = 0L
     private var lastBlockedRedirect = 0L
+    private var blockedPageBaseUrl: String? = null
+    private var restrictedCustomPageUrl: String? = null
     private val usageHandler = Handler(Looper.getMainLooper())
     private var usageRunning = false
 
@@ -107,7 +109,7 @@ class MainActivity : Activity() {
                 if (isRefreshBlocked(url)) return true
                 if (prefs.getBoolean("media_viewer", true)) {
                     val media = detectMediaViewerUrl(url)
-                    if (media != null) {
+                    if (media != null && isMediaExceptionAllowed(web.url ?: "", media)) {
                         extractMediaViaHiddenWebView(url, media)
                         return true
                     }
@@ -118,6 +120,10 @@ class MainActivity : Activity() {
             // going through shouldOverrideUrlLoading above (e.g. a server-side redirect chain
             // or a WebView-version quirk), catch it here too before content renders.
             override fun onPageStarted(v: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                if (restrictedCustomPageUrl != null && normalizeUrl(url) != restrictedCustomPageUrl) {
+                    // Do not clear while a media viewer route is being handled from the restricted page.
+                    if (detectMediaViewerUrl(url) == null) restrictedCustomPageUrl = null
+                }
                 if (isAuth(url)) return
                 if (!isWithinScheduledHours()) { usageRunning = false; v.stopLoading(); runOnUiThread { showScheduleBlockedScreen() }; return }
                 if (checkDailyLimitExceeded()) { usageRunning = false; v.stopLoading(); runOnUiThread { showLimitReachedScreen() }; return }
@@ -338,15 +344,37 @@ class MainActivity : Activity() {
         val u = url.lowercase()
         val isFacebookDomain = u.contains("facebook.com") || u.contains("fbcdn.net")
 
+        val restricted = restrictedCustomPageUrl
+        if (restricted != null && normalizeUrl(web.url ?: "") == restricted &&
+            normalizeUrl(url) != restricted) {
+            val media = detectMediaViewerUrl(url)
+            if (media != null && isMediaExceptionAllowed(web.url ?: "", media)) return false
+            notifyUserFromAnyThread("تم منع التنقل من الصفحة المحظورة")
+            incrementBlockedCount()
+            return true
+        }
+
         if (prefs.getBoolean("custom_block_enabled", false)) {
             val exceptions = getListPref("custom_block_exceptions")
             val isException = exceptions.any { u.contains(it) }
             if (!isException) {
                 val blocklist = getListPref("custom_block_domains")
                 if (blocklist.any { it.isNotEmpty() && u.contains(it) }) {
-                    notifyUserFromAnyThread("تم منع هذا الرابط (قائمة حظر مخصصة)")
-                    incrementBlockedCount()
-                    return true
+                    val allowMediaOnThisPage =
+                        prefs.getBoolean("custom_block_allow_images", false) ||
+                        prefs.getBoolean("custom_block_allow_videos", false)
+                    if (allowMediaOnThisPage) {
+                        // The page itself is loaded in restricted mode. Normal navigation remains
+                        // blocked, while the selected photo/video media types may be opened only
+                        // from this exact page.
+                        restrictedCustomPageUrl = normalizeUrl(url)
+                        blockedPageBaseUrl = normalizeUrl(url)
+                    } else {
+                        blockedPageBaseUrl = normalizeUrl(url)
+                        notifyUserFromAnyThread("تم منع هذا الرابط (قائمة حظر مخصصة)")
+                        incrementBlockedCount()
+                        return true
+                    }
                 }
             }
         }
@@ -378,6 +406,13 @@ class MainActivity : Activity() {
         }
 
         return false
+    }
+
+    private fun isMediaExceptionAllowed(pageUrl: String, type: String): Boolean {
+        val blocked = blockedPageBaseUrl ?: return false
+        if (normalizeUrl(pageUrl) != blocked) return false
+        return if (type == "image") prefs.getBoolean("custom_block_allow_images", false)
+        else prefs.getBoolean("custom_block_allow_videos", false)
     }
 
     private fun redirectHomeForKeyword() {
@@ -433,7 +468,7 @@ class MainActivity : Activity() {
         }
         if (prefs.getBoolean("media_viewer", true)) {
             val media = detectMediaViewerUrl(url)
-            if (media != null) {
+            if (media != null && isMediaExceptionAllowed(url, media)) {
                 // SPA route already changed under us; snap back to where we were, then show
                 // the media in our own viewer using the current (already-loaded) page's DOM.
                 val extractJs = if (media == "video")
@@ -727,6 +762,22 @@ class MainActivity : Activity() {
 
         val exceptionsLabel = TextView(this); exceptionsLabel.text="استثناءات مسموحة رغم الحظر أعلاه (افصل بفاصلة ,) — مثال: facebook.com/groups/113344129011322"; exceptionsLabel.setPadding(0,10,0,4); box.addView(exceptionsLabel)
         val exceptionsInput = EditText(this); exceptionsInput.setText(prefs.getString("custom_block_exceptions","")); box.addView(exceptionsInput)
+
+        val swAllowImages = Switch(this)
+        swAllowImages.text = "استثناء الصور داخل الصفحة المحظورة فقط"
+        swAllowImages.isChecked = prefs.getBoolean("custom_block_allow_images", false)
+        swAllowImages.setOnCheckedChangeListener { _, v ->
+            prefs.edit().putBoolean("custom_block_allow_images", v).apply()
+        }
+        box.addView(swAllowImages)
+
+        val swAllowVideos = Switch(this)
+        swAllowVideos.text = "استثناء الفيديو داخل الصفحة المحظورة فقط"
+        swAllowVideos.isChecked = prefs.getBoolean("custom_block_allow_videos", false)
+        swAllowVideos.setOnCheckedChangeListener { _, v ->
+            prefs.edit().putBoolean("custom_block_allow_videos", v).apply()
+        }
+        box.addView(swAllowVideos)
 
         val addCurrentExceptionBtn = TextView(this); addCurrentExceptionBtn.text="➕ إضافة الرابط الحالي إلى الاستثناءات"; addCurrentExceptionBtn.setTextColor(Color.BLUE); addCurrentExceptionBtn.setPadding(0,6,0,10)
         addCurrentExceptionBtn.setOnClickListener {

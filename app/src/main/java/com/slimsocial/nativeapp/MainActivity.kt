@@ -423,8 +423,14 @@ class MainActivity : Activity() {
         if (handleNavigation(url)) {
             web.post {
                 web.stopLoading()
-                web.loadUrl("https://www.facebook.com/")
-                Toast.makeText(this, "تم إرجاعك للصفحة الرئيسية (تنقّل ممنوع)", Toast.LENGTH_SHORT).show()
+                val mode = prefs.getString("blocked_redirect_mode", "back") ?: "back"
+                if (mode == "custom") {
+                    val customUrl = prefs.getString("blocked_redirect_url", "") ?: ""
+                    web.loadUrl(if (customUrl.isNotEmpty()) customUrl else getHomeUrl())
+                } else {
+                    if (web.canGoBack()) web.goBack() else web.loadUrl(getHomeUrl())
+                }
+                Toast.makeText(this, "تم إرجاعك (تنقّل ممنوع)", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -776,6 +782,12 @@ class MainActivity : Activity() {
         val custom=EditText(this); custom.hint="CSS مخصص (اختياري)"; custom.setText(prefs.getString("css","")); box.addView(custom)
         val jsBox=EditText(this); jsBox.hint="JavaScript مخصص (اختياري)"; jsBox.setText(prefs.getString("js","")); box.addView(jsBox)
 
+        val sepRedirect = TextView(this); sepRedirect.text="— وجهة الرجوع عند منع تنقّل —"; sepRedirect.setPadding(0,16,0,10); sepRedirect.setTextColor(Color.GRAY); box.addView(sepRedirect)
+        val swRedirectCustom = Switch(this); swRedirectCustom.text="استخدام رابط محدد بدل الرجوع لنفس المكان"; swRedirectCustom.isChecked = prefs.getString("blocked_redirect_mode","back") == "custom"
+        box.addView(swRedirectCustom)
+        val redirectUrlLabel = TextView(this); redirectUrlLabel.text="الرابط المحدد (يُستخدم فقط إذا فعّلت الخيار أعلاه)"; redirectUrlLabel.setPadding(0,8,0,4); box.addView(redirectUrlLabel)
+        val redirectUrlInput = EditText(this); redirectUrlInput.setText(prefs.getString("blocked_redirect_url","")); box.addView(redirectUrlInput)
+
         val sepHome = TextView(this); sepHome.text="— الصفحة الرئيسية والصفحات —"; sepHome.setPadding(0,20,0,10); sepHome.setTextColor(Color.GRAY); box.addView(sepHome)
 
         val homeLabel = TextView(this); homeLabel.text="رابط الصفحة الرئيسية"; homeLabel.setPadding(0,4,0,4); box.addView(homeLabel)
@@ -846,6 +858,8 @@ class MainActivity : Activity() {
                 .putInt("schedule_start_hour", (startInput.text.toString().toIntOrNull() ?: 0).coerceIn(0,23))
                 .putInt("schedule_end_hour", (endInput.text.toString().toIntOrNull() ?: 24).coerceIn(0,24))
                 .putString("home_url", homeUrl)
+                .putString("blocked_redirect_mode", if (swRedirectCustom.isChecked) "custom" else "back")
+                .putString("blocked_redirect_url", redirectUrlInput.text.toString().trim())
                 .apply()
             saveCustomPages(currentPages)
             applyCustom()

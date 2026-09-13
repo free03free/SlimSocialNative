@@ -254,6 +254,11 @@ class MainActivity : Activity() {
         return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
     }
 
+    private fun getListPref(key: String): List<String> {
+        val raw = prefs.getString(key, "") ?: ""
+        return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+    }
+
     private fun getKeywordList(): List<String> {
         val raw = prefs.getString("keyword_blocklist", "") ?: ""
         return raw.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
@@ -284,6 +289,19 @@ class MainActivity : Activity() {
     private fun handleNavigation(url: String): Boolean {
         val u = url.lowercase()
         val isFacebookDomain = u.contains("facebook.com") || u.contains("fbcdn.net")
+
+        if (prefs.getBoolean("custom_block_enabled", false)) {
+            val exceptions = getListPref("custom_block_exceptions")
+            val isException = exceptions.any { u.contains(it) }
+            if (!isException) {
+                val blocklist = getListPref("custom_block_domains")
+                if (blocklist.any { it.isNotEmpty() && u.contains(it) }) {
+                    runOnUiThread { Toast.makeText(this, "تم منع هذا الرابط (قائمة حظر مخصصة)", Toast.LENGTH_SHORT).show() }
+                    incrementBlockedCount()
+                    return true
+                }
+            }
+        }
 
         if (prefs.getBoolean("block_external", false) && !isFacebookDomain) {
             runOnUiThread { Toast.makeText(this, "تم منع رابط خارجي", Toast.LENGTH_SHORT).show() }
@@ -596,6 +614,31 @@ class MainActivity : Activity() {
         swExternal.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_external",v).apply() }
         box.addView(swExternal)
 
+        val sepCustomBlock = TextView(this); sepCustomBlock.text="— قائمة حظر مخصصة —"; sepCustomBlock.setPadding(0,16,0,6); sepCustomBlock.setTextColor(Color.GRAY); box.addView(sepCustomBlock)
+
+        val swCustomBlock = Switch(this); swCustomBlock.text="تفعيل قائمة الحظر المخصصة"; swCustomBlock.isChecked=prefs.getBoolean("custom_block_enabled",false)
+        swCustomBlock.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("custom_block_enabled",v).apply() }
+        box.addView(swCustomBlock)
+
+        val blockDomainsLabel = TextView(this); blockDomainsLabel.text="روابط/نطاقات للحظر (افصل بفاصلة ,) — مثال: www.facebook.com,m.facebook.com"; blockDomainsLabel.setPadding(0,8,0,4); box.addView(blockDomainsLabel)
+        val blockDomainsInput = EditText(this); blockDomainsInput.setText(prefs.getString("custom_block_domains","")); box.addView(blockDomainsInput)
+
+        val exceptionsLabel = TextView(this); exceptionsLabel.text="استثناءات مسموحة رغم الحظر أعلاه (افصل بفاصلة ,) — مثال: facebook.com/groups/113344129011322"; exceptionsLabel.setPadding(0,10,0,4); box.addView(exceptionsLabel)
+        val exceptionsInput = EditText(this); exceptionsInput.setText(prefs.getString("custom_block_exceptions","")); box.addView(exceptionsInput)
+
+        val addCurrentExceptionBtn = TextView(this); addCurrentExceptionBtn.text="➕ إضافة الرابط الحالي إلى الاستثناءات"; addCurrentExceptionBtn.setTextColor(Color.BLUE); addCurrentExceptionBtn.setPadding(0,6,0,10)
+        addCurrentExceptionBtn.setOnClickListener {
+            val currentUrl = (web.url ?: "").lowercase()
+            if (currentUrl.isNotEmpty()) {
+                val current = exceptionsInput.text.toString()
+                val list = current.split(",").map{it.trim()}.filter{it.isNotEmpty()}.toMutableList()
+                if (!list.contains(currentUrl)) list.add(currentUrl)
+                exceptionsInput.setText(list.joinToString(","))
+                Toast.makeText(this,"أُضيف للاستثناءات، لا تنسَ الضغط على حفظ",Toast.LENGTH_SHORT).show()
+            }
+        }
+        box.addView(addCurrentExceptionBtn)
+
         val swGroups = Switch(this); swGroups.text="منع مجموعات غير مشترك فيها (استثناء يدوي)"; swGroups.isChecked=prefs.getBoolean("block_unjoined_groups",false)
         swGroups.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_unjoined_groups",v).apply() }
         box.addView(swGroups)
@@ -746,6 +789,8 @@ class MainActivity : Activity() {
                 .putString("css",custom.text.toString())
                 .putString("js",jsBox.text.toString())
                 .putString("group_whitelist", whitelistInput.text.toString())
+                .putString("custom_block_domains", blockDomainsInput.text.toString())
+                .putString("custom_block_exceptions", exceptionsInput.text.toString())
                 .putString("keyword_blocklist", keywordsInput.text.toString())
                 .putString("button_block_words", btnWordsInput.text.toString())
                 .putInt("daily_limit_minutes", limitInput.text.toString().toIntOrNull() ?: 0)

@@ -17,6 +17,7 @@ import java.util.*
 
 class MainActivity : Activity() {
     private lateinit var web: WebView
+    private lateinit var homeBtn: Button
     @Volatile private var videoPlaying = false
     private val prefs by lazy { getSharedPreferences("controls", MODE_PRIVATE) }
     private val blocks = listOf("Like / Reactions","Comments","Share","Follow / Friends","Profiles","Messenger","Stories","Reels / Watch","Search","Post creation","Upload","Marketplace","Group interactions","All buttons")
@@ -72,7 +73,7 @@ class MainActivity : Activity() {
                 if (!isAuth(url)) { applyControls(); applyCustom() }
             }
         }
-        web.loadUrl("https://www.facebook.com/")
+        web.loadUrl(getHomeUrl())
 
         val menuBtn = findViewById<View>(R.id.menu)
         val reloadBtn = findViewById<View>(R.id.reload)
@@ -81,6 +82,16 @@ class MainActivity : Activity() {
             if (prefs.getBoolean("block_refresh", false)) Toast.makeText(this, "تحديث الصفحة معطّل من الإعدادات", Toast.LENGTH_SHORT).show()
             else web.reload()
         }
+
+        homeBtn = Button(this).apply {
+            text = "🏠"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.TRANSPARENT)
+            setOnClickListener { web.loadUrl(getHomeUrl()) }
+            setOnLongClickListener { showPagesChooser(); true }
+        }
+        (reloadBtn.parent as? ViewGroup)?.addView(homeBtn)
+
         applyToolbarVisibility(menuBtn, reloadBtn)
 
         val root = findViewById<View>(android.R.id.content)
@@ -115,6 +126,47 @@ class MainActivity : Activity() {
         val hide = prefs.getBoolean("hide_toolbar", false)
         menuBtn.visibility = if (hide) View.GONE else View.VISIBLE
         reloadBtn.visibility = if (hide) View.GONE else View.VISIBLE
+        homeBtn.visibility = if (hide) View.GONE else View.VISIBLE
+    }
+
+    private fun getHomeUrl(): String = prefs.getString("home_url", "https://www.facebook.com/") ?: "https://www.facebook.com/"
+
+    private fun getCustomPages(): MutableList<Pair<String, String>> {
+        val raw = prefs.getString("custom_pages", "[]") ?: "[]"
+        val list = mutableListOf<Pair<String, String>>()
+        try {
+            val arr = org.json.JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(obj.getString("name") to obj.getString("url"))
+            }
+        } catch (e: Exception) { /* ignore malformed data */ }
+        return list
+    }
+
+    private fun saveCustomPages(pages: List<Pair<String, String>>) {
+        val arr = org.json.JSONArray()
+        pages.forEach { (name, url) ->
+            val obj = JSONObject()
+            obj.put("name", name)
+            obj.put("url", url)
+            arr.put(obj)
+        }
+        prefs.edit().putString("custom_pages", arr.toString()).apply()
+    }
+
+    private fun showPagesChooser() {
+        val pages = mutableListOf("🏠 الرئيسية" to getHomeUrl())
+        pages.addAll(getCustomPages())
+        if (pages.size <= 1) {
+            Toast.makeText(this, "لا توجد صفحات إضافية بعد. أضِفها من الإعدادات", Toast.LENGTH_SHORT).show()
+        }
+        val names = pages.map { it.first }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("انتقل إلى صفحة")
+            .setItems(names) { _, which -> web.loadUrl(pages[which].second) }
+            .setNegativeButton("إلغاء", null)
+            .show()
     }
 
     private fun isAuth(url: String): Boolean {
@@ -416,6 +468,49 @@ class MainActivity : Activity() {
         val custom=EditText(this); custom.hint="CSS مخصص (اختياري)"; custom.setText(prefs.getString("css","")); box.addView(custom)
         val jsBox=EditText(this); jsBox.hint="JavaScript مخصص (اختياري)"; jsBox.setText(prefs.getString("js","")); box.addView(jsBox)
 
+        val sepHome = TextView(this); sepHome.text="— الصفحة الرئيسية والصفحات —"; sepHome.setPadding(0,20,0,10); sepHome.setTextColor(Color.GRAY); box.addView(sepHome)
+
+        val homeLabel = TextView(this); homeLabel.text="رابط الصفحة الرئيسية"; homeLabel.setPadding(0,4,0,4); box.addView(homeLabel)
+        val homeInput = EditText(this); homeInput.setText(getHomeUrl()); box.addView(homeInput)
+
+        val pagesLabel = TextView(this); pagesLabel.text="الصفحات الإضافية (اضغط 🏠 مطوّلاً في الشريط للتنقل بينها)"; pagesLabel.setPadding(0,16,0,4); box.addView(pagesLabel)
+        val pagesContainer = LinearLayout(this); pagesContainer.orientation = LinearLayout.VERTICAL; box.addView(pagesContainer)
+
+        val currentPages = getCustomPages()
+
+        fun refreshPagesList() {
+            pagesContainer.removeAllViews()
+            currentPages.forEachIndexed { index, pair ->
+                val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.setPadding(0,4,0,4)
+                val label = TextView(this); label.text = "${pair.first}\n${pair.second}"; label.textSize = 13f
+                label.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                row.addView(label)
+                val delBtn = TextView(this); delBtn.text = "✕"; delBtn.setTextColor(Color.RED); delBtn.setPadding(20,0,10,0)
+                delBtn.setOnClickListener { currentPages.removeAt(index); refreshPagesList() }
+                row.addView(delBtn)
+                pagesContainer.addView(row)
+            }
+        }
+        refreshPagesList()
+
+        val newNameInput = EditText(this); newNameInput.hint = "اسم الصفحة الجديدة"; box.addView(newNameInput)
+        val newUrlInput = EditText(this); newUrlInput.hint = "رابط الصفحة الجديدة (https://...)"; box.addView(newUrlInput)
+        val addPageBtn = TextView(this); addPageBtn.text = "➕ إضافة صفحة جديدة للقائمة"; addPageBtn.setTextColor(Color.BLUE); addPageBtn.setPadding(0,6,0,10)
+        addPageBtn.setOnClickListener {
+            val name = newNameInput.text.toString().trim()
+            var url = newUrlInput.text.toString().trim()
+            if (name.isEmpty() || url.isEmpty()) {
+                Toast.makeText(this, "يرجى إدخال الاسم والرابط", Toast.LENGTH_SHORT).show()
+            } else {
+                if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
+                currentPages.add(name to url)
+                newNameInput.setText("")
+                newUrlInput.setText("")
+                refreshPagesList()
+            }
+        }
+        box.addView(addPageBtn)
+
         val changePwd = TextView(this); changePwd.text="تغيير رمز PIN"; changePwd.setTextColor(Color.BLUE); changePwd.setPadding(0,20,0,0)
         changePwd.setOnClickListener {
             val newInput = EditText(this)
@@ -428,12 +523,17 @@ class MainActivity : Activity() {
         box.addView(changePwd)
 
         AlertDialog.Builder(this).setView(ScrollView(this).apply{addView(box)}).setPositiveButton("حفظ"){_,_->
+            var homeUrl = homeInput.text.toString().trim()
+            if (homeUrl.isEmpty()) homeUrl = "https://www.facebook.com/"
+            if (!homeUrl.startsWith("http://") && !homeUrl.startsWith("https://")) homeUrl = "https://$homeUrl"
             prefs.edit()
                 .putString("css",custom.text.toString())
                 .putString("js",jsBox.text.toString())
                 .putString("group_whitelist", whitelistInput.text.toString())
                 .putInt("daily_limit_minutes", limitInput.text.toString().toIntOrNull() ?: 0)
+                .putString("home_url", homeUrl)
                 .apply()
+            saveCustomPages(currentPages)
             applyCustom()
         }.setNegativeButton("إغلاق",null).show()
     }

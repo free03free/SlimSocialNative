@@ -445,16 +445,9 @@ class MainActivity : Activity() {
         if (prefs.getBoolean("block_copy", false)) {
             web.isLongClickable = false
             web.setOnLongClickListener { true }
-            web.customSelectionActionModeCallback = object : ActionMode.Callback {
-                override fun onCreateActionMode(mode: ActionMode?, menu: Menu?) = false
-                override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?) = false
-                override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?) = false
-                override fun onDestroyActionMode(mode: ActionMode?) {}
-            }
         } else {
             web.isLongClickable = true
             web.setOnLongClickListener(null)
-            web.customSelectionActionModeCallback = null
         }
     }
 

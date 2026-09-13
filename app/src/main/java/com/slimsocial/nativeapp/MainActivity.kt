@@ -549,9 +549,9 @@ class MainActivity : Activity() {
                 // The SPA URL is already current, so extract media from the DOM only;
                 // do not grant any navigation permission to the new route.
                 val extractJs = if (media == "video")
-                    "(function(){var v=document.querySelector('video');if(v&&v.currentSrc)return v.currentSrc;if(v&&v.src)return v.src;var og=document.querySelector("meta[property='og:video'],meta[property='og:video:secure_url']");return og?og.content:'';})();"
+                    """(function(){var v=document.querySelector('video');if(v&&v.currentSrc)return v.currentSrc;if(v&&v.src)return v.src;var og=document.querySelector("meta[property='og:video'],meta[property='og:video:secure_url']");return og?og.content:'';})();"""
                 else
-                    "(function(){var og=document.querySelector("meta[property='og:image']");if(og&&og.content)return og.content;var img=document.querySelector("img[data-visualcompletion='media-vc-image']")||document.querySelector("[role='main'] img");return img?img.src:'';})();"
+                    """(function(){var og=document.querySelector("meta[property='og:image']");if(og&&og.content)return og.content;var img=document.querySelector("img[data-visualcompletion='media-vc-image']")||document.querySelector("[role='main'] img");return img?img.src:'';})();"""
 
                 web.evaluateJavascript(extractJs) { result ->
                     val raw = result?.trim('"') ?: ""

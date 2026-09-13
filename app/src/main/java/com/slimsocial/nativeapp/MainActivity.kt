@@ -59,6 +59,8 @@ class MainActivity : Activity() {
         web.addJavascriptInterface(object {
             @android.webkit.JavascriptInterface
             fun setPlaying(playing: Boolean) { videoPlaying = playing }
+            @android.webkit.JavascriptInterface
+            fun checkNav(url: String) { runOnUiThread { handleSpaNavigation(url) } }
         }, "SlimBridge")
         web.webViewClient = object: WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
@@ -205,6 +207,17 @@ class MainActivity : Activity() {
         return false
     }
 
+    private fun handleSpaNavigation(url: String) {
+        if (isAuth(url)) return
+        if (handleNavigation(url)) {
+            web.post {
+                web.stopLoading()
+                web.loadUrl("https://www.facebook.com/")
+                Toast.makeText(this, "تم إرجاعك للصفحة الرئيسية (تنقّل ممنوع)", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun extractGroupId(url: String): String? {
         val regex = Regex("facebook\\.com/groups/([^/?&#]+)")
         val match = regex.find(url)
@@ -293,9 +306,12 @@ class MainActivity : Activity() {
         if (prefs.getBoolean("block_videos", false)) js.append("s+='video{visibility:hidden!important;}';")
         if (prefs.getBoolean("block_video_swipe", false)) js.append("s+='video,[data-pagelet*=\\\"Reel\\\" i],[role=\\\"main\\\"] video{touch-action:none!important;}';")
         js.append("var st=document.getElementById('slimstyle-tag')||document.createElement('style');st.id='slimstyle-tag';st.textContent=s;document.head.appendChild(st);")
-        js.append("if(!window.__slimSwipeGuard){window.__slimSwipeGuard=true;document.addEventListener('touchmove',function(e){if(window.__slimBlockSwipe){var t=e.target.closest('video');if(t){e.preventDefault();}}},{passive:false});}")
+        js.append("if(!window.__slimSwipeGuard){window.__slimSwipeGuard=true;document.addEventListener('touchmove',function(e){if(window.__slimBlockSwipe){var t=e.target.closest('video,[data-pagelet*=\"Reel\" i],[aria-label*=\"Reel\" i],[role=\"main\"] video');if(t){e.preventDefault();}}},{passive:false});}")
         js.append("window.__slimBlockSwipe=").append(prefs.getBoolean("block_video_swipe", false)).append(";")
         js.append("if(!window.__slimVideoTracker){window.__slimVideoTracker=true;function slimHook(v){if(v.__slimHooked)return;v.__slimHooked=true;v.addEventListener('play',function(){if(window.SlimBridge)SlimBridge.setPlaying(true);});v.addEventListener('pause',function(){if(window.SlimBridge)SlimBridge.setPlaying(false);});v.addEventListener('ended',function(){if(window.SlimBridge)SlimBridge.setPlaying(false);});}document.querySelectorAll('video').forEach(slimHook);new MutationObserver(function(){document.querySelectorAll('video').forEach(slimHook);}).observe(document.body,{childList:true,subtree:true});}")
+        js.append("window.__slimBlockRefresh=").append(prefs.getBoolean("block_refresh", false)).append(";")
+        js.append("if(!window.__slimReloadGuard){window.__slimReloadGuard=true;try{var _rl=location.reload.bind(location);location.reload=function(){if(window.__slimBlockRefresh){if(window.SlimBridge)SlimBridge.checkNav(location.href);return;}_rl();};}catch(e){}try{var _go=history.go.bind(history);history.go=function(n){if((n===0||n===undefined)&&window.__slimBlockRefresh){return;}_go(n);};}catch(e){}}")
+        js.append("if(!window.__slimSpaGuard){window.__slimSpaGuard=true;window.__slimLastUrl=location.href;function slimCheckSpa(){if(location.href!==window.__slimLastUrl){window.__slimLastUrl=location.href;if(window.SlimBridge)SlimBridge.checkNav(location.href);}}var _ps=history.pushState;history.pushState=function(){_ps.apply(history,arguments);slimCheckSpa();};var _rs=history.replaceState;history.replaceState=function(){_rs.apply(history,arguments);slimCheckSpa();};window.addEventListener('popstate',slimCheckSpa);setInterval(slimCheckSpa,600);}")
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
     }

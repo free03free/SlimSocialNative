@@ -149,6 +149,14 @@ class MainActivity : Activity() {
                     v.post { v.loadUrl(lockedUrl) }
                     return
                 }
+                // If an exception is being used in media-only mode, the exception URL
+                // itself may be opened once. Immediately after navigation starts it becomes
+                // the single locked origin; all subsequent navigation is blocked.
+                if (isMediaOnlyCustomException(url) && restrictedCustomPageUrl == null) {
+                    restrictedCustomPageUrl = normalizeUrl(url)
+                    blockedPageBaseUrl = normalizeUrl(url)
+                    blockedNavigationUrl = null
+                }
                 if (handleNavigation(url)) {
                     v.stopLoading()
                     val generation = blockedNavigationGeneration
@@ -159,8 +167,29 @@ class MainActivity : Activity() {
                     }
                 }
             }
+            override fun doUpdateVisitedHistory(v: WebView, url: String, isReload: Boolean) {
+                super.doUpdateVisitedHistory(v, url, isReload)
+                if (isAuth(url)) return
+                val restricted = restrictedCustomPageUrl
+                if (restricted != null && normalizeUrl(url) != restricted) {
+                    blockedNavigationUrl = normalizeUrl(url)
+                    blockedNavigationGeneration++
+                    v.stopLoading()
+                    v.post {
+                        if (restrictedCustomPageUrl == restricted && normalizeUrl(v.url ?: "") != restricted) {
+                            v.loadUrl(restricted)
+                        }
+                    }
+                    return
+                }
+            }
             override fun onPageFinished(v: WebView, url: String) {
                 if (!isAuth(url)) { applyControls(); applyCustom() }
+                val restricted = restrictedCustomPageUrl
+                if (restricted != null && normalizeUrl(url) != restricted) {
+                    v.stopLoading()
+                    v.post { if (restrictedCustomPageUrl == restricted) v.loadUrl(restricted) }
+                }
             }
         }
         web.loadUrl(getHomeUrl())
@@ -388,6 +417,14 @@ class MainActivity : Activity() {
         return match?.groupValues?.get(1)
     }
 
+    private fun isMediaOnlyCustomException(url: String): Boolean {
+        if (!prefs.getBoolean("custom_block_enabled", false)) return false
+        if (prefs.getBoolean("custom_block_full_exceptions", false)) return false
+        if (!prefs.getBoolean("custom_block_allow_images", false) &&
+            !prefs.getBoolean("custom_block_allow_videos", false)) return false
+        return getListPref("custom_block_exceptions").any { matchesConfiguredUrlRule(url, it) }
+    }
+
     private fun handleNavigation(url: String): Boolean {
         val u = normalizeUrl(url)
         if (u.isEmpty()) return true
@@ -415,16 +452,36 @@ class MainActivity : Activity() {
         if (prefs.getBoolean("custom_block_enabled", false)) {
             val exceptions = getListPref("custom_block_exceptions")
             val isException = exceptions.any { matchesConfiguredUrlRule(url, it) }
-            if (!isException) {
+            val fullExceptions = prefs.getBoolean("custom_block_full_exceptions", false)
+            val mediaOnlyException = isException && !fullExceptions &&
+                (prefs.getBoolean("custom_block_allow_images", false) ||
+                 prefs.getBoolean("custom_block_allow_videos", false))
+
+            // Full exception: preserve the original whitelist behavior.
+            if (isException && !mediaOnlyException) {
+                // Allowed destination.
+            } else {
                 val blocklist = getListPref("custom_block_domains")
                 if (blocklist.any { it.isNotEmpty() && matchesConfiguredUrlRule(url, it) }) {
                     val allowImages = prefs.getBoolean("custom_block_allow_images", false)
                     val allowVideos = prefs.getBoolean("custom_block_allow_videos", false)
                     if (allowImages || allowVideos) {
-                        // The page itself may be shown, but it becomes a media-only sandbox.
-                        restrictedCustomPageUrl = u
-                        blockedPageBaseUrl = u
-                        blockedNavigationUrl = null
+                        // IMPORTANT: enabling media exceptions never grants navigation.
+                        // The restricted origin is established in onPageStarted when the
+                        // destination itself is displayed. All later destinations are blocked.
+                        if (restrictedCustomPageUrl == null) {
+                            return false
+                        }
+                        val current = normalizeUrl(web.url ?: "")
+                        if (current == u && restrictedCustomPageUrl == u) {
+                            // Same restricted origin.
+                        } else {
+                            blockedNavigationUrl = u
+                            blockedNavigationGeneration++
+                            notifyUserFromAnyThread("تم منع التنقل من الصفحة المحظورة")
+                            incrementBlockedCount()
+                            return true
+                        }
                     } else {
                         blockedNavigationUrl = u
                         blockedNavigationGeneration++
@@ -432,6 +489,10 @@ class MainActivity : Activity() {
                         incrementBlockedCount()
                         return true
                     }
+                } else if (mediaOnlyException) {
+                    // This configured exception is itself a media-only origin. The initial
+                    // navigation is allowed; onPageStarted converts it into a locked origin.
+                    return false
                 }
             }
         }
@@ -743,7 +804,14 @@ class MainActivity : Activity() {
         js.append("window.__slimBlockRefresh=").append(prefs.getBoolean("block_refresh", false)).append(";window.__slimBlockRefreshOnVideo=").append(prefs.getBoolean("block_refresh_on_video", false)).append(";")
         js.append("if(!window.__slimReloadGuard){window.__slimReloadGuard=true;try{var _rl=location.reload.bind(location);location.reload=function(){if(window.__slimBlockRefresh){if(window.SlimBridge)SlimBridge.checkNav(location.href);return;}_rl();};}catch(e){}try{var _go=history.go.bind(history);history.go=function(n){if((n===0||n===undefined)&&window.__slimBlockRefresh){return;}_go(n);};}catch(e){}}")
         js.append("if(!window.__slimPullGuard){window.__slimPullGuard=true;var __slimStartY=0;document.addEventListener('touchstart',function(e){__slimStartY=e.touches[0].clientY;},{passive:true,capture:true});document.addEventListener('touchmove',function(e){var blocked=window.__slimBlockRefresh||(window.__slimBlockRefreshOnVideo&&window.__slimVideoPlaying);if(blocked&&window.scrollY<=2&&e.touches[0].clientY>__slimStartY+3){e.preventDefault();}},{passive:false,capture:true});}")
-        js.append("if(!window.__slimSpaGuard){window.__slimSpaGuard=true;window.__slimLastUrl=location.href;function slimCheckSpa(){if(location.href!==window.__slimLastUrl){window.__slimLastUrl=location.href;if(window.SlimBridge)SlimBridge.checkNav(location.href);}}var _ps=history.pushState;history.pushState=function(){_ps.apply(history,arguments);slimCheckSpa();};var _rs=history.replaceState;history.replaceState=function(){_rs.apply(history,arguments);slimCheckSpa();};window.addEventListener('popstate',slimCheckSpa);setInterval(slimCheckSpa,600);}")
+        if (restrictedCustomPageUrl != null) {
+            // HARD SPA LOCK: a restricted page cannot change its history URL. The only
+            // permitted media path is SlimBridge.openMedia(), which does not navigate
+            // the Facebook WebView at all.
+            js.append("if(!window.__slimSpaGuard){window.__slimSpaGuard=true;window.__slimLastUrl=location.href;var _ps=history.pushState;history.pushState=function(s,t,u){var h='';try{h=new URL(u,location.href).href;}catch(e){h=location.href;}if(window.SlimBridge)SlimBridge.checkNav(h);return;};var _rs=history.replaceState;history.replaceState=function(s,t,u){var h='';try{h=new URL(u,location.href).href;}catch(e){h=location.href;}if(window.SlimBridge)SlimBridge.checkNav(h);return;};window.addEventListener('popstate',function(){if(location.href!==window.__slimLastUrl&&window.SlimBridge)SlimBridge.checkNav(location.href);});setInterval(function(){if(location.href!==window.__slimLastUrl&&window.SlimBridge)SlimBridge.checkNav(location.href);},250);}")
+        } else {
+            js.append("if(!window.__slimSpaGuard){window.__slimSpaGuard=true;window.__slimLastUrl=location.href;function slimCheckSpa(){if(location.href!==window.__slimLastUrl){window.__slimLastUrl=location.href;if(window.SlimBridge)SlimBridge.checkNav(location.href);}}var _ps=history.pushState;history.pushState=function(){_ps.apply(history,arguments);slimCheckSpa();};var _rs=history.replaceState;history.replaceState=function(){_rs.apply(history,arguments);slimCheckSpa();};window.addEventListener('popstate',slimCheckSpa);setInterval(slimCheckSpa,600);}")
+        }
         val keywords = getKeywordList()
         val kwJson = "[" + keywords.joinToString(",") { JSONObject.quote(it) } + "]"
         js.append("window.__slimKeywords=").append(kwJson).append(";")
@@ -766,7 +834,7 @@ class MainActivity : Activity() {
             // native bridge approves. This prevents Facebook's SPA router from turning
             // a media exception into permission to visit profiles, pages, groups, posts,
             // search, reels, or any other destination.
-            js.append("if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;var h=a.href||'';var p='';var q='';try{var u=new URL(h,location.href);p=u.pathname.toLowerCase();q=u.search.toLowerCase();}catch(x){e.preventDefault();e.stopImmediatePropagation();return;}var type=null;if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||(q.indexOf('fbid=')!==-1&&(p==='/permalink.php'||p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0)))type='image';else if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/reel/')===0||p==='/watch'||(q.indexOf('v=')!==-1&&(p==='/watch'||p==='/video.php')))type='video';e.preventDefault();e.stopImmediatePropagation();if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href))return;}catch(x){}}if(window.SlimBridge){try{SlimBridge.checkNav(h);}catch(x){}}},true);document.addEventListener('pointerdown',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(a){var h=a.href||'';if(h&&window.SlimBridge){try{var u=new URL(h,location.href);if(u.href!==location.href){e.preventDefault();e.stopImmediatePropagation();}}catch(x){e.preventDefault();e.stopImmediatePropagation();}}}},true);}")
+            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href],[role="link"],[role="button"]'):null;if(!a){e.preventDefault();e.stopImmediatePropagation();return;}var h=a.href||'';var p='';var q='';try{var u=new URL(h,location.href);p=u.pathname.toLowerCase();q=u.search.toLowerCase();}catch(x){e.preventDefault();e.stopImmediatePropagation();return;}var type=null;if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||(q.indexOf('fbid=')!==-1&&(p==='/permalink.php'||p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0)))type='image';else if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/reel/')===0||p==='/watch'||(q.indexOf('v=')!==-1&&(p==='/watch'||p==='/video.php')))type='video';e.preventDefault();e.stopImmediatePropagation();if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href))return;}catch(x){}}if(window.SlimBridge){try{SlimBridge.checkNav(h);}catch(x){} }},true);document.addEventListener('pointerdown',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href],[role="link"],[role="button"]'):null;if(a){var h=a.href||'';if(h&&window.SlimBridge){try{var u=new URL(h,location.href);if(u.href!==location.href){e.preventDefault();e.stopImmediatePropagation();}}catch(x){e.preventDefault();e.stopImmediatePropagation();}}}},true);}""")
         }
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
@@ -880,6 +948,20 @@ class MainActivity : Activity() {
             prefs.edit().putBoolean("custom_block_allow_videos", v).apply()
         }
         box.addView(swAllowVideos)
+
+        val swFullExceptions = Switch(this)
+        swFullExceptions.text = "السماح بالاستثناءات للوصول الكامل (يعطل وضع الوسائط فقط لهذه الاستثناءات)"
+        swFullExceptions.isChecked = prefs.getBoolean("custom_block_full_exceptions", false)
+        swFullExceptions.setOnCheckedChangeListener { _, v ->
+            prefs.edit().putBoolean("custom_block_full_exceptions", v).apply()
+        }
+        box.addView(swFullExceptions)
+
+        val mediaRuleInfo = TextView(this)
+        mediaRuleInfo.text = "عند إيقاف هذا الخيار مع تفعيل الصور/الفيديو: الاستثناءات المضافة تسمح بفتح الوسائط داخل الصفحة فقط، ولا تسمح بدخول بروفايلات أو صفحات أو مجموعات أخرى."
+        mediaRuleInfo.setTextColor(Color.GRAY)
+        mediaRuleInfo.setPadding(0, 2, 0, 8)
+        box.addView(mediaRuleInfo)
 
         val addCurrentExceptionBtn = TextView(this); addCurrentExceptionBtn.text="➕ إضافة الرابط الحالي إلى الاستثناءات"; addCurrentExceptionBtn.setTextColor(Color.BLUE); addCurrentExceptionBtn.setPadding(0,6,0,10)
         addCurrentExceptionBtn.setOnClickListener {

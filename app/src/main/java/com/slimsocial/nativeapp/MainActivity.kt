@@ -457,43 +457,34 @@ class MainActivity : Activity() {
                 (prefs.getBoolean("custom_block_allow_images", false) ||
                  prefs.getBoolean("custom_block_allow_videos", false))
 
-            // Full exception: preserve the original whitelist behavior.
-            if (isException && !mediaOnlyException) {
-                // Allowed destination.
-            } else {
-                val blocklist = getListPref("custom_block_domains")
-                if (blocklist.any { it.isNotEmpty() && matchesConfiguredUrlRule(url, it) }) {
-                    val allowImages = prefs.getBoolean("custom_block_allow_images", false)
-                    val allowVideos = prefs.getBoolean("custom_block_allow_videos", false)
-                    if (allowImages || allowVideos) {
-                        // IMPORTANT: enabling media exceptions never grants navigation.
-                        // The restricted origin is established in onPageStarted when the
-                        // destination itself is displayed. All later destinations are blocked.
-                        if (restrictedCustomPageUrl == null) {
-                            return false
-                        }
-                        val current = normalizeUrl(web.url ?: "")
-                        if (current == u && restrictedCustomPageUrl == u) {
-                            // Same restricted origin.
-                        } else {
-                            blockedNavigationUrl = u
-                            blockedNavigationGeneration++
-                            notifyUserFromAnyThread("تم منع التنقل من الصفحة المحظورة")
-                            incrementBlockedCount()
-                            return true
-                        }
-                    } else {
-                        blockedNavigationUrl = u
-                        blockedNavigationGeneration++
-                        notifyUserFromAnyThread("تم منع هذا الرابط (قائمة حظر مخصصة)")
-                        incrementBlockedCount()
-                        return true
-                    }
-                } else if (mediaOnlyException) {
+            // A media-only exception is allowed ONLY when this exact destination is
+            // present in the user's exception list. The image/video toggles never turn
+            // arbitrary blocked pages into allowed pages.
+            if (isException && !fullExceptions) {
+                if (mediaOnlyException) {
                     // This configured exception is itself a media-only origin. The initial
                     // navigation is allowed; onPageStarted converts it into a locked origin.
                     return false
                 }
+                // Exception without an enabled media type is NOT a media permission.
+                // It is blocked unless the user explicitly enables full exceptions.
+                blockedNavigationUrl = u
+                blockedNavigationGeneration++
+                notifyUserFromAnyThread("الاستثناء لا يسمح بالتنقل؛ فعّل الصور أو الفيديو فقط")
+                incrementBlockedCount()
+                return true
+            }
+
+            val blocklist = getListPref("custom_block_domains")
+            if (blocklist.any { it.isNotEmpty() && matchesConfiguredUrlRule(url, it) }) {
+                // IMPORTANT: images/video are allowed only on URLs that are explicitly
+                // listed in the exception field. A blocked URL that is not an exception
+                // remains completely blocked, regardless of the media toggles.
+                blockedNavigationUrl = u
+                blockedNavigationGeneration++
+                notifyUserFromAnyThread("تم منع هذا الرابط (قائمة حظر مخصصة)")
+                incrementBlockedCount()
+                return true
             }
         }
 
@@ -934,7 +925,7 @@ class MainActivity : Activity() {
         val exceptionsInput = EditText(this); exceptionsInput.setText(prefs.getString("custom_block_exceptions","")); box.addView(exceptionsInput)
 
         val swAllowImages = Switch(this)
-        swAllowImages.text = "استثناء الصور داخل الصفحة المحظورة فقط"
+        swAllowImages.text = "السماح بالصور فقط داخل رابط موجود في الاستثناءات"
         swAllowImages.isChecked = prefs.getBoolean("custom_block_allow_images", false)
         swAllowImages.setOnCheckedChangeListener { _, v ->
             prefs.edit().putBoolean("custom_block_allow_images", v).apply()
@@ -942,7 +933,7 @@ class MainActivity : Activity() {
         box.addView(swAllowImages)
 
         val swAllowVideos = Switch(this)
-        swAllowVideos.text = "استثناء الفيديو داخل الصفحة المحظورة فقط"
+        swAllowVideos.text = "السماح بالفيديو فقط داخل رابط موجود في الاستثناءات"
         swAllowVideos.isChecked = prefs.getBoolean("custom_block_allow_videos", false)
         swAllowVideos.setOnCheckedChangeListener { _, v ->
             prefs.edit().putBoolean("custom_block_allow_videos", v).apply()
@@ -958,7 +949,7 @@ class MainActivity : Activity() {
         box.addView(swFullExceptions)
 
         val mediaRuleInfo = TextView(this)
-        mediaRuleInfo.text = "عند إيقاف هذا الخيار مع تفعيل الصور/الفيديو: الاستثناءات المضافة تسمح بفتح الوسائط داخل الصفحة فقط، ولا تسمح بدخول بروفايلات أو صفحات أو مجموعات أخرى."
+        mediaRuleInfo.text = "الصور/الفيديو مسموحة فقط داخل رابط موجود في قائمة الاستثناءات. لا يتم السماح بأي رابط أو بروفايل أو صفحة أو مجموعة أخرى. اترك الوصول الكامل للاستثناءات متوقفًا."
         mediaRuleInfo.setTextColor(Color.GRAY)
         mediaRuleInfo.setPadding(0, 2, 0, 8)
         box.addView(mediaRuleInfo)

@@ -1588,6 +1588,7 @@ class MainActivity : Activity() {
         val diagnose = Button(this).apply { text = "🔎 فحص القواعد الحالية + نسخ الأخطاء" }
 diagnose.setOnClickListener { applyCustomRules(); web.postDelayed({ showRuleEngineReport() }, 500) }
 container.addView(diagnose)
+var refresh: () -> Unit = {}
 val likePreset = Button(this).apply { text = "👍 إضافة قاعدة اختبار: إخفاء زر إعجاب" }
 likePreset.setOnClickListener {
     val a = customRulesJson()

@@ -1345,7 +1345,70 @@ class MainActivity : Activity() {
     // parent/link/div instead of the <img> itself. This native-gated overlay sits above
     // every sufficiently large image and consumes the tap before Facebook can navigate.
     // It opens ONLY the image through openRestrictedImage(); it never opens the page.
-    private fun installRestrictedImageTouchLayer() {\n        if (!web.settings.javaScriptEnabled) return\n        val js = """\n        (function(){\n          try {\n            if (window.__slimRestrictedImageLayer) {\n              window.__slimRestrictedImageLayer.refresh();\n              return;\n            }\n            var root=document.createElement('div');\n            root.id='slim-restricted-image-touch-root';\n            root.style.cssText='position:fixed;inset:0;z-index:2147483000;pointer-events:none;';\n            (document.body||document.documentElement).appendChild(root);\n            var items=[];\n            function clean(){\n              items.forEach(function(x){try{x.remove();}catch(e){}});\n              items=[];\n            }\n            function valid(img){\n              if(!img || img.tagName!=='IMG') return false;\n              var r=img.getBoundingClientRect();\n              return r.width>=55 && r.height>=55 && (img.currentSrc||img.src);\n            }\n            function refresh(){\n              clean();\n              var imgs=Array.prototype.slice.call(document.images||[]);\n              imgs.forEach(function(img){\n                if(!valid(img)) return;\n                var r=img.getBoundingClientRect();\n                if(r.bottom<0 || r.right<0 || r.top>innerHeight || r.left>innerWidth) return;\n                var b=document.createElement('div');\n                b.setAttribute('data-slim-image-touch','1');\n                b.style.cssText='position:fixed;left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;pointer-events:auto;background:transparent;';\n                function open(e){\n                  try {\n                    if(e){e.preventDefault();e.stopPropagation();if(e.stopImmediatePropagation)e.stopImmediatePropagation();}\n                  }catch(_){}\n                  var u=img.currentSrc||img.src||'';\n                  if(window.SlimBridge && SlimBridge.openRestrictedImage){\n                    SlimBridge.openRestrictedImage(u,location.href);\n                  }\n                  return false;\n                }\n                b.addEventListener('touchstart',open,{capture:true,passive:false});\n                b.addEventListener('touchend',open,{capture:true,passive:false});\n                b.addEventListener('pointerdown',open,{capture:true,passive:false});\n                b.addEventListener('click',open,{capture:true,passive:false});\n                root.appendChild(b);\n                items.push(b);\n              });\n            }\n            window.__slimRestrictedImageLayer={refresh:refresh};\n            refresh();\n            window.addEventListener('scroll',refresh,true);\n            window.addEventListener('resize',refresh,true);\n            new MutationObserver(function(){setTimeout(refresh,50);}).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['src','style','class']});\n            setInterval(refresh,1000);\n          }catch(e){}\n        })();\n        """.trimIndent()\n        web.evaluateJavascript(js, null)\n    }\n\n    // Minimal in-app viewer: one media item, one close button. No like/comment/share/nav chrome.\n    private fun showMediaViewer(type: String, url: String) {
+    private fun installRestrictedImageTouchLayer() {
+        if (!web.settings.javaScriptEnabled) return
+        val js = """
+        (function(){
+          try {
+            if (window.__slimRestrictedImageLayer) {
+              window.__slimRestrictedImageLayer.refresh();
+              return;
+            }
+            var root=document.createElement('div');
+            root.id='slim-restricted-image-touch-root';
+            root.style.cssText='position:fixed;inset:0;z-index:2147483000;pointer-events:none;';
+            (document.body||document.documentElement).appendChild(root);
+            var items=[];
+            function clean(){
+              items.forEach(function(x){try{x.remove();}catch(e){}});
+              items=[];
+            }
+            function valid(img){
+              if(!img || img.tagName!=='IMG') return false;
+              var r=img.getBoundingClientRect();
+              return r.width>=55 && r.height>=55 && (img.currentSrc||img.src);
+            }
+            function refresh(){
+              clean();
+              var imgs=Array.prototype.slice.call(document.images||[]);
+              imgs.forEach(function(img){
+                if(!valid(img)) return;
+                var r=img.getBoundingClientRect();
+                if(r.bottom<0 || r.right<0 || r.top>innerHeight || r.left>innerWidth) return;
+                var b=document.createElement('div');
+                b.setAttribute('data-slim-image-touch','1');
+                b.style.cssText='position:fixed;left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;pointer-events:auto;background:transparent;';
+                function open(e){
+                  try {
+                    if(e){e.preventDefault();e.stopPropagation();if(e.stopImmediatePropagation)e.stopImmediatePropagation();}
+                  }catch(_){}
+                  var u=img.currentSrc||img.src||'';
+                  if(window.SlimBridge && SlimBridge.openRestrictedImage){
+                    SlimBridge.openRestrictedImage(u,location.href);
+                  }
+                  return false;
+                }
+                b.addEventListener('touchstart',open,{capture:true,passive:false});
+                b.addEventListener('touchend',open,{capture:true,passive:false});
+                b.addEventListener('pointerdown',open,{capture:true,passive:false});
+                b.addEventListener('click',open,{capture:true,passive:false});
+                root.appendChild(b);
+                items.push(b);
+              });
+            }
+            window.__slimRestrictedImageLayer={refresh:refresh};
+            refresh();
+            window.addEventListener('scroll',refresh,true);
+            window.addEventListener('resize',refresh,true);
+            new MutationObserver(function(){setTimeout(refresh,50);}).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['src','style','class']});
+            setInterval(refresh,1000);
+          }catch(e){}
+        })();
+        """.trimIndent()
+        web.evaluateJavascript(js, null)
+    }
+
+    // Minimal in-app viewer: one media item, one close button. No like/comment/share/nav chrome.\n    private fun showMediaViewer(type: String, url: String) {
         val container = FrameLayout(this)
         container.setBackgroundColor(Color.BLACK)
 

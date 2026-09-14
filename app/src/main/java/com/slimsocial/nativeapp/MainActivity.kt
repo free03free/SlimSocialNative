@@ -177,6 +177,7 @@ class MainActivity : Activity() {
             override fun doUpdateVisitedHistory(v: WebView, url: String, isReload: Boolean) {
                 super.doUpdateVisitedHistory(v, url, isReload)
                 if (isAuth(url)) return
+                applyCustomRulesDelayed()
                 val restricted = restrictedCustomPageUrl
                 if (restricted != null && normalizeUrl(url) != restricted) {
                     blockedNavigationUrl = normalizeUrl(url)
@@ -1103,6 +1104,7 @@ class MainActivity : Activity() {
 
         val sepRules = TextView(this); sepRules.text="— قواعد JavaScript / CSS —"; sepRules.setPadding(0,16,0,8); sepRules.setTextColor(Color.GRAY); box.addView(sepRules)
         val rulesBtn = Button(this); rulesBtn.text="⚙ إدارة قواعد JS / CSS (حفظ / إلغاء / حذف / تفعيل)"; rulesBtn.setOnClickListener { showCustomRulesManager() }; box.addView(rulesBtn)
+        val testRulesBtn = Button(this); testRulesBtn.text="🔧 فحص محرك JS / CSS"; testRulesBtn.setOnClickListener { testCustomJsCssEngine() }; box.addView(testRulesBtn)
         val rulesInfo = TextView(this); rulesInfo.text="يمكنك إنشاء 10 قواعد أو أكثر، لكل قاعدة اسم وتفعيل ونطاق وأولوية وCSS وJavaScript مستقلان. لا توجد قاعدة واحدة تُلغي أو تختلط تلقائيًا مع الأخرى."; rulesInfo.setTextColor(Color.GRAY); rulesInfo.setPadding(0,2,0,10); box.addView(rulesInfo)
 
         val sepRedirect = TextView(this); sepRedirect.text="— وجهة الرجوع عند منع تنقّل —"; sepRedirect.setPadding(0,16,0,10); sepRedirect.setTextColor(Color.GRAY); box.addView(sepRedirect)
@@ -1402,9 +1404,11 @@ class MainActivity : Activity() {
             val js = rule.optString("js", "")
             val qid = JSONObject.quote(id)
             if (css.isNotBlank()) {
-                parts.append("(function(){var s=document.createElement('style');s.setAttribute('data-slim-custom-rule',")
-                    .append(qid).append(");s.textContent=")
-                    .append(JSONObject.quote(css)).append(";document.head.appendChild(s);})();")
+                // Facebook can temporarily have no <head> during SPA transitions.
+                // Inject into head when available, otherwise into documentElement.
+                parts.append("(function(){var s=document.getElementById('slim-css-" ).append(qid).append("');if(s)s.remove();s=document.createElement('style');s.id='slim-css-" ).append(qid).append("';s.setAttribute('data-slim-custom-rule'," )
+                    .append(qid).append(");s.type='text/css';s.textContent=")
+                    .append(JSONObject.quote(css)).append(";(document.head||document.documentElement).appendChild(s);})();")
             }
             if (js.isNotBlank()) {
                 // One try/catch per rule: a broken rule cannot stop the remaining rules.
@@ -1414,14 +1418,25 @@ class MainActivity : Activity() {
                     .append(js).append("}).call(window);}catch(e){}})();")
             }
         }
-        parts.append("}catch(e){}})();")
-        web.evaluateJavascript(parts.toString(), null)
+        // Keep the rule engine alive across Facebook SPA re-renders. Facebook often
+        // creates/replaces buttons after onPageFinished, so a one-shot injection is not enough.
+        parts.append("window.__slimRuleEngineVersion='2';")
+        parts.append("}catch(e){try{console.log('SlimRules engine error',e);}catch(x){}}})();")
+        web.evaluateJavascript(parts.toString()) { result ->
+            // No user-visible message here; the callback is intentionally used so the
+            // WebView actually completes the JS evaluation before later passes.
+        }
     }
 
     private fun applyCustomRulesDelayed() {
         if (!web.settings.javaScriptEnabled || isAuth(web.url ?: "")) return
+        // Multiple passes are intentional: Facebook is an SPA and can render the target
+        // element well after the first page-finished event.
+        web.post { applyCustomRules() }
         web.postDelayed({ applyCustomRules() }, 250)
-        web.postDelayed({ applyCustomRules() }, 1000)
+        web.postDelayed({ applyCustomRules() }, 700)
+        web.postDelayed({ applyCustomRules() }, 1500)
+        web.postDelayed({ applyCustomRules() }, 3000)
     }
 
     private fun scopeLabel(scope: String): String = when (scope) {
@@ -1534,6 +1549,39 @@ class MainActivity : Activity() {
         container.addView(add)
         AlertDialog.Builder(this).setTitle("إدارة قواعد JS / CSS").setView(ScrollView(this).apply { addView(container) })
             .setNegativeButton("إغلاق", null).show()
+    }
+
+    private fun testCustomJsCssEngine() {
+        if (!web.settings.javaScriptEnabled) {
+            AlertDialog.Builder(this).setTitle("فحص JS / CSS")
+                .setMessage("❌ JavaScript معطّل في WebView.\n\nفعّل خيار JavaScript من الإعدادات ثم أعد تشغيل التطبيق.\n\nملاحظة: CSS المخصص في هذا التطبيق يتم حقنه بواسطة JavaScript، لذلك لن يعمل إذا كان JavaScript معطّلًا.")
+                .setPositiveButton("حسنًا", null).show()
+            return
+        }
+        if (isAuth(web.url ?: "")) {
+            AlertDialog.Builder(this).setTitle("فحص JS / CSS")
+                .setMessage("⚠️ أنت في صفحة تسجيل الدخول.\nافتح Facebook بعد تسجيل الدخول ثم نفّذ الاختبار.")
+                .setPositiveButton("حسنًا", null).show()
+            return
+        }
+        val testJs = """(function(){try{
+            var r={js:true,body:!!document.body,head:!!document.head,url:location.href,ready:document.readyState};
+            var old=document.getElementById('slim-engine-test-style'); if(old) old.remove();
+            var st=document.createElement('style'); st.id='slim-engine-test-style';
+            st.textContent='#slim-engine-test-box{position:fixed!important;top:12px!important;left:12px!important;right:12px!important;z-index:2147483647!important;background:#d32f2f!important;color:#fff!important;padding:16px!important;text-align:center!important;font-size:20px!important;font-weight:bold!important;border-radius:8px!important;display:block!important}';
+            (document.head||document.documentElement).appendChild(st);
+            var b=document.getElementById('slim-engine-test-box'); if(!b){b=document.createElement('div');b.id='slim-engine-test-box';document.body.appendChild(b);} b.textContent='JS + CSS يعمل ✓';
+            setTimeout(function(){var x=document.getElementById('slim-engine-test-box');if(x)x.remove();var y=document.getElementById('slim-engine-test-style');if(y)y.remove();},5000);
+            r.css=true;r.marker=true;return JSON.stringify(r);
+        }catch(e){return JSON.stringify({js:true,error:String(e)});}})()"""
+        web.evaluateJavascript(testJs) { result ->
+            runOnUiThread {
+                val clean = result?.removePrefix("\"")?.removeSuffix("\"")?.replace("\\\"", "\"") ?: ""
+                AlertDialog.Builder(this).setTitle("نتيجة فحص JS / CSS")
+                    .setMessage(clean.ifEmpty { "تم تنفيذ JavaScript، لكن لم تصل نتيجة من WebView." })
+                    .setPositiveButton("حسنًا", null).show()
+            }
+        }
     }
 
     private fun applyCustom(){

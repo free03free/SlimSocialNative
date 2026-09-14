@@ -1408,7 +1408,8 @@ class MainActivity : Activity() {
         web.evaluateJavascript(js, null)
     }
 
-    // Minimal in-app viewer: one media item, one close button. No like/comment/share/nav chrome.\n    private fun showMediaViewer(type: String, url: String) {
+    // Minimal in-app viewer: one media item, one close button. No like/comment/share/nav chrome.
+    private fun showMediaViewer(type: String, url: String) {
         val container = FrameLayout(this)
         container.setBackgroundColor(Color.BLACK)
 

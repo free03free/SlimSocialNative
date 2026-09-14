@@ -1543,6 +1543,8 @@ val info = TextView(this).apply {
         val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         container.addView(listBox)
 
+        var refresh: () -> Unit = {}
+
         fun editRule(existing: JSONObject?, onDone: () -> Unit) {
             val id = existing?.optString("id", UUID.randomUUID().toString()) ?: UUID.randomUUID().toString()
             val name = EditText(this).apply { hint = "اسم القاعدة"; setText(existing?.optString("name", "") ?: "") }
@@ -1603,23 +1605,23 @@ val info = TextView(this).apply {
             d.show()
         }
 
-        fun refresh() {
+        refresh = {
             listBox.removeAllViews()
             val a = customRulesJson()
             if (a.length() == 0) {
                 listBox.addView(TextView(this).apply { text = "لا توجد قواعد بعد. اضغط + لإضافة أول قاعدة."; setPadding(0, 12, 0, 12) })
-                return
-            }
-            for (i in 0 until a.length()) {
-                val o = a.optJSONObject(i) ?: continue
-                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 6, 0, 6) }
-                val ruleText = TextView(this).apply {
-                    text = "${if (o.optBoolean("enabled", true)) "✓" else "○"} ${o.optString("name", "بدون اسم")}\n${scopeLabel(o.optString("scope", "all"))} • أولوية ${o.optInt("priority", 0)}"
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            } else {
+                for (i in 0 until a.length()) {
+                    val o = a.optJSONObject(i) ?: continue
+                    val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 6, 0, 6) }
+                    val ruleText = TextView(this).apply {
+                        text = "${if (o.optBoolean("enabled", true)) "✓" else "○"} ${o.optString("name", "بدون اسم")}\n${scopeLabel(o.optString("scope", "all"))} • أولوية ${o.optInt("priority", 0)}"
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+                    val edit = Button(this).apply { text = "تعديل" }
+                    edit.setOnClickListener { editRule(o) { refresh() } }
+                    row.addView(ruleText); row.addView(edit); listBox.addView(row)
                 }
-                val edit = Button(this).apply { text = "تعديل" }
-                edit.setOnClickListener { editRule(o) { refresh() } }
-                row.addView(ruleText); row.addView(edit); listBox.addView(row)
             }
         }
         refresh()

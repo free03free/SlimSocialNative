@@ -83,6 +83,25 @@ class MainActivity : Activity() {
             @android.webkit.JavascriptInterface
             fun checkNav(url: String) { runOnUiThread { handleSpaNavigation(url) } }
             @android.webkit.JavascriptInterface
+            fun openRestrictedImage(url: String, origin: String): Boolean {
+                // Image-only gate for an explicitly configured media-only exception.
+                // It NEVER grants page/navigation permission.
+                val current = web.url ?: ""
+                val o = normalizeUrl(origin)
+                val c = normalizeUrl(current)
+                val restricted = restrictedCustomPageUrl
+                if (restricted == null || o != restricted || c != restricted) return false
+                if (!isMediaExceptionAllowed(origin, "image")) return false
+                val u = try { Uri.parse(url) } catch (_: Exception) { return false }
+                val host = u.host?.lowercase()?.trimEnd('.') ?: return false
+                val allowedHost = host == "facebook.com" || host.endsWith(".facebook.com") ||
+                    host == "fbcdn.net" || host.endsWith(".fbcdn.net") ||
+                    host == "fbsbx.com" || host.endsWith(".fbsbx.com")
+                if (u.scheme?.lowercase() != "https" || !allowedHost) return false
+                runOnUiThread { showMediaViewer("image", url) }
+                return true
+            }
+            @android.webkit.JavascriptInterface
             fun openMedia(type: String, url: String, origin: String): Boolean {
                 // This bridge is the ONLY media-exception gate. It validates the exact
                 // restricted-page origin and the native media classification before any
@@ -198,7 +217,12 @@ class MainActivity : Activity() {
                 }
             }
             override fun onPageFinished(v: WebView, url: String) {
-                if (!isAuth(url)) { applyControls(); applyCustomRulesDelayed() }
+                if (!isAuth(url)) {
+                    applyControls(); applyCustomRulesDelayed()
+                    if (restrictedCustomPageUrl != null && isMediaExceptionAllowed(url, "image")) {
+                        installRestrictedImageTouchLayer()
+                    }
+                }
                 val restricted = restrictedCustomPageUrl
                 if (restricted != null && normalizeUrl(url) != restricted) {
                     v.stopLoading()
@@ -906,7 +930,7 @@ class MainActivity : Activity() {
                 visibility = if (open) View.VISIBLE else View.GONE
             }
             val header = TextView(this).apply {
-                text = if (open) "$icon  $titleText   ⌃" else "$icon  $titleText   ⌄"
+                text = if (open) "$icon  $titleText   ▲" else "$icon  $titleText   ▼"
                 textSize = 17f
                 setTextColor(Color.DKGRAY)
                 setPadding(14, 15, 14, 15)
@@ -917,7 +941,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     val show = content.visibility != View.VISIBLE
                     content.visibility = if (show) View.VISIBLE else View.GONE
-                    text = if (show) "$icon  $titleText   ⌃" else "$icon  $titleText   ⌄"
+                    text = if (show) "$icon  $titleText   ▲" else "$icon  $titleText   ▼"
                 }
             }
             wrapper.addView(header)
@@ -942,7 +966,7 @@ class MainActivity : Activity() {
             parent.addView(sw)
         }
 
-        val basic = section("الحظر الأساسي", "🛡️", false)
+        val basic = section("الحظر الأساسي", "🛡️", true)
         blocks.forEach { name ->
             val sw = Switch(this).apply {
                 text = arabicLabels[name] ?: name
@@ -1317,8 +1341,7 @@ class MainActivity : Activity() {
         hidden.loadUrl(url)
     }
 
-    // Minimal in-app viewer: one media item, one close button. No like/comment/share/nav chrome.
-    private fun showMediaViewer(type: String, url: String) {
+    // On a media-only blocked page Facebook often puts the real tap target on a\n    // parent/link/div instead of the <img> itself. This native-gated overlay sits above\n    // every sufficiently large image and consumes the tap before Facebook can navigate.\n    // It opens ONLY the image through openRestrictedImage(); it never opens the page.\n    private fun installRestrictedImageTouchLayer() {\n        if (!web.settings.javaScriptEnabled) return\n        val js = """\n        (function(){\n          try {\n            if (window.__slimRestrictedImageLayer) {\n              window.__slimRestrictedImageLayer.refresh();\n              return;\n            }\n            var root=document.createElement('div');\n            root.id='slim-restricted-image-touch-root';\n            root.style.cssText='position:fixed;inset:0;z-index:2147483000;pointer-events:none;';\n            (document.body||document.documentElement).appendChild(root);\n            var items=[];\n            function clean(){\n              items.forEach(function(x){try{x.remove();}catch(e){}});\n              items=[];\n            }\n            function valid(img){\n              if(!img || img.tagName!=='IMG') return false;\n              var r=img.getBoundingClientRect();\n              return r.width>=55 && r.height>=55 && (img.currentSrc||img.src);\n            }\n            function refresh(){\n              clean();\n              var imgs=Array.prototype.slice.call(document.images||[]);\n              imgs.forEach(function(img){\n                if(!valid(img)) return;\n                var r=img.getBoundingClientRect();\n                if(r.bottom<0 || r.right<0 || r.top>innerHeight || r.left>innerWidth) return;\n                var b=document.createElement('div');\n                b.setAttribute('data-slim-image-touch','1');\n                b.style.cssText='position:fixed;left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;pointer-events:auto;background:transparent;';\n                function open(e){\n                  try {\n                    if(e){e.preventDefault();e.stopPropagation();if(e.stopImmediatePropagation)e.stopImmediatePropagation();}\n                  }catch(_){}\n                  var u=img.currentSrc||img.src||'';\n                  if(window.SlimBridge && SlimBridge.openRestrictedImage){\n                    SlimBridge.openRestrictedImage(u,location.href);\n                  }\n                  return false;\n                }\n                b.addEventListener('touchstart',open,{capture:true,passive:false});\n                b.addEventListener('touchend',open,{capture:true,passive:false});\n                b.addEventListener('pointerdown',open,{capture:true,passive:false});\n                b.addEventListener('click',open,{capture:true,passive:false});\n                root.appendChild(b);\n                items.push(b);\n              });\n            }\n            window.__slimRestrictedImageLayer={refresh:refresh};\n            refresh();\n            window.addEventListener('scroll',refresh,true);\n            window.addEventListener('resize',refresh,true);\n            new MutationObserver(function(){setTimeout(refresh,50);}).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['src','style','class']});\n            setInterval(refresh,1000);\n          }catch(e){}\n        })();\n        """.trimIndent()\n        web.evaluateJavascript(js, null)\n    }\n\n    // Minimal in-app viewer: one media item, one close button. No like/comment/share/nav chrome.\n    private fun showMediaViewer(type: String, url: String) {
         val container = FrameLayout(this)
         container.setBackgroundColor(Color.BLACK)
 
@@ -1464,10 +1487,6 @@ class MainActivity : Activity() {
                 val cb = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 cb.setPrimaryClip(android.content.ClipData.newPlainText("SlimSocial JS/CSS Report", report))
                 notifyUser("تم نسخ التقرير. أرسله هنا")
-            }
-            .setPositiveButton("تنظيف") { _, _ ->
-                lastRuleEngineReport = "لم يتم الفحص بعد"
-                notifyUser("تم تنظيف التقرير")
             }.show()
     }
 
@@ -1501,7 +1520,6 @@ class MainActivity : Activity() {
         val diagnose = Button(this).apply { text = "🔎 فحص القواعد الحالية + نسخ الأخطاء" }
 diagnose.setOnClickListener { applyCustomRules(); web.postDelayed({ showRuleEngineReport() }, 500) }
 container.addView(diagnose)
-var refresh: () -> Unit = {}
 val likePreset = Button(this).apply { text = "👍 إضافة قاعدة اختبار: إخفاء زر إعجاب" }
 likePreset.setOnClickListener {
     val a = customRulesJson()
@@ -1547,6 +1565,8 @@ val info = TextView(this).apply {
         container.addView(info)
         val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         container.addView(listBox)
+
+        var refresh: () -> Unit = {}
 
         fun editRule(existing: JSONObject?, onDone: () -> Unit) {
             val id = existing?.optString("id", UUID.randomUUID().toString()) ?: UUID.randomUUID().toString()

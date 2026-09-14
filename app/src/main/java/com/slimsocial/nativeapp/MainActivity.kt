@@ -1497,6 +1497,7 @@ class MainActivity : Activity() {
         val diagnose = Button(this).apply { text = "🔎 فحص القواعد الحالية + نسخ الأخطاء" }
 diagnose.setOnClickListener { applyCustomRules(); web.postDelayed({ showRuleEngineReport() }, 500) }
 container.addView(diagnose)
+var refresh: () -> Unit = {}
 val likePreset = Button(this).apply { text = "👍 إضافة قاعدة اختبار: إخفاء زر إعجاب" }
 likePreset.setOnClickListener {
     val a = customRulesJson()
@@ -1542,8 +1543,6 @@ val info = TextView(this).apply {
         container.addView(info)
         val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         container.addView(listBox)
-
-        var refresh: () -> Unit = {}
 
         fun editRule(existing: JSONObject?, onDone: () -> Unit) {
             val id = existing?.optString("id", UUID.randomUUID().toString()) ?: UUID.randomUUID().toString()

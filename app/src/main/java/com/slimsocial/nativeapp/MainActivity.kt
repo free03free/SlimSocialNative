@@ -906,7 +906,7 @@ class MainActivity : Activity() {
                 visibility = if (open) View.VISIBLE else View.GONE
             }
             val header = TextView(this).apply {
-                text = if (open) "$icon  $titleText   ▲" else "$icon  $titleText   ▼"
+                text = if (open) "$icon  $titleText   ⌃" else "$icon  $titleText   ⌄"
                 textSize = 17f
                 setTextColor(Color.DKGRAY)
                 setPadding(14, 15, 14, 15)
@@ -917,7 +917,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     val show = content.visibility != View.VISIBLE
                     content.visibility = if (show) View.VISIBLE else View.GONE
-                    text = if (show) "$icon  $titleText   ▲" else "$icon  $titleText   ▼"
+                    text = if (show) "$icon  $titleText   ⌃" else "$icon  $titleText   ⌄"
                 }
             }
             wrapper.addView(header)
@@ -942,7 +942,7 @@ class MainActivity : Activity() {
             parent.addView(sw)
         }
 
-        val basic = section("الحظر الأساسي", "🛡️", true)
+        val basic = section("الحظر الأساسي", "🛡️", false)
         blocks.forEach { name ->
             val sw = Switch(this).apply {
                 text = arabicLabels[name] ?: name
@@ -1464,6 +1464,10 @@ class MainActivity : Activity() {
                 val cb = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 cb.setPrimaryClip(android.content.ClipData.newPlainText("SlimSocial JS/CSS Report", report))
                 notifyUser("تم نسخ التقرير. أرسله هنا")
+            }
+            .setPositiveButton("تنظيف") { _, _ ->
+                lastRuleEngineReport = "لم يتم الفحص بعد"
+                notifyUser("تم تنظيف التقرير")
             }.show()
     }
 

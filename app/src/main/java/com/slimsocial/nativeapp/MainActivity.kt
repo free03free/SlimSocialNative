@@ -1519,13 +1519,13 @@ class MainActivity : Activity() {
             for (i in 0 until a.length()) {
                 val o = a.optJSONObject(i) ?: continue
                 val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 6, 0, 6) }
-                val text = TextView(this).apply {
+                val ruleText = TextView(this).apply {
                     text = "${if (o.optBoolean("enabled", true)) "✓" else "○"} ${o.optString("name", "بدون اسم")}\n${scopeLabel(o.optString("scope", "all"))} • أولوية ${o.optInt("priority", 0)}"
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 }
                 val edit = Button(this).apply { text = "تعديل" }
                 edit.setOnClickListener { editRule(o) { refresh() } }
-                row.addView(text); row.addView(edit); listBox.addView(row)
+                row.addView(ruleText); row.addView(edit); listBox.addView(row)
             }
         }
         refresh()

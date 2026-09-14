@@ -835,7 +835,7 @@ class MainActivity : Activity() {
             // native bridge approves. This prevents Facebook's SPA router from turning
             // a media exception into permission to visit profiles, pages, groups, posts,
             // search, reels, or any other destination.
-            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href],[role="link"],[role="button"]'):null;if(!a){e.preventDefault();e.stopImmediatePropagation();return;}var h=a.href||'';var p='';var q='';try{var u=new URL(h,location.href);p=u.pathname.toLowerCase();q=u.search.toLowerCase();}catch(x){e.preventDefault();e.stopImmediatePropagation();return;}var type=null;if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/photo')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1)type='image';else if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)type='video';e.preventDefault();e.stopImmediatePropagation();if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href))return;}catch(x){}}if(window.SlimBridge){try{SlimBridge.checkNav(h);}catch(x){} }},true);document.addEventListener('pointerdown',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href],[role="link"],[role="button"]'):null;if(a){var h=a.href||'';if(h&&window.SlimBridge){try{var u=new URL(h,location.href);if(u.href!==location.href){e.preventDefault();e.stopImmediatePropagation();}}catch(x){e.preventDefault();e.stopImmediatePropagation();}}}},true);}""")
+            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;function __slimMediaType(h){try{var u=new URL(h,location.href),p=(u.pathname||'').toLowerCase(),q=(u.search||'').toLowerCase(),x=u.href.toLowerCase();if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/permalink.php')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1||q.indexOf('set=a.')!==-1)return 'image';if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)return 'video';if((u.hostname||'').toLowerCase().indexOf('fbcdn.net')!==-1){if(/\.(mp4|webm|mov|m3u8)(?:[?#]|$)/i.test(x))return 'video';if(/\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)/i.test(x))return 'image';}return null;}catch(x){return null;}}function __slimOpenMedia(e){var t=e.target;var v=t&&t.closest?t.closest('video'):null;if(v){var src=v.currentSrc||v.src||'';if(src&&window.SlimBridge){try{if(SlimBridge.openMedia('video',src,location.href))return true;}catch(x){}}}var img=t&&t.closest?t.closest('img'):null;if(img){var src=img.currentSrc||img.src||img.getAttribute('src')||'';if(src&&window.SlimBridge){try{if(SlimBridge.openMedia('image',src,location.href))return true;}catch(x){}}}return false;}document.addEventListener('click',function(e){if(__slimOpenMedia(e)){e.preventDefault();e.stopImmediatePropagation();return;}var a=e.target&&e.target.closest?e.target.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;var h=a?(a.href||''):'';e.preventDefault();e.stopImmediatePropagation();var type=h?__slimMediaType(h):null;if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href))return;}catch(x){}}if(window.SlimBridge&&h){try{SlimBridge.checkNav(h);}catch(x){}}},true);document.addEventListener('pointerdown',function(e){if(e.target&&e.target.closest&&e.target.closest('img,video')){e.preventDefault();e.stopImmediatePropagation();return;}var a=e.target&&e.target.closest?e.target.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;if(a){var h=a.href||'';if(h&&window.SlimBridge){try{var u=new URL(h,location.href);if(u.href!==location.href){e.preventDefault();e.stopImmediatePropagation();}}catch(x){e.preventDefault();e.stopImmediatePropagation();}}}},true);}""")
         }
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
@@ -1180,7 +1180,16 @@ class MainActivity : Activity() {
 
         if (path == "/photo.php" || path.startsWith("/photo/") ||
             path.startsWith("/photos/") || path.startsWith("/photo") ||
-            query.contains("fbid=") || query.contains("photo_id=")) return "image"
+            path.startsWith("/permalink.php") ||
+            query.contains("fbid=") || query.contains("photo_id=") ||
+            query.contains("set=a.")) return "image"
+
+        // Facebook thumbnails frequently expose the actual CDN media URL directly.
+        val lowerUrl = url.lowercase()
+        if (host == "fbcdn.net" || host.endsWith(".fbcdn.net")) {
+            if (Regex("\\.(mp4|webm|mov|m3u8)(?:[?#]|$)").containsMatchIn(lowerUrl)) return "video"
+            if (Regex("\\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)").containsMatchIn(lowerUrl)) return "image"
+        }
 
         return null
     }

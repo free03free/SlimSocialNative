@@ -881,7 +881,7 @@ class MainActivity : Activity() {
             // native bridge approves. This prevents Facebook's SPA router from turning
             // a media exception into permission to visit profiles, pages, groups, posts,
             // search, reels, or any other destination.
-            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;function __slimMediaType(h){try{var u=new URL(h,location.href),p=(u.pathname||'').toLowerCase(),q=(u.search||'').toLowerCase(),x=u.href.toLowerCase();if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/permalink.php')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1||q.indexOf('set=a.')!==-1)return 'image';if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)return 'video';if((u.hostname||'').toLowerCase().indexOf('fbcdn.net')!==-1){if(/\.(mp4|webm|mov|m3u8)(?:[?#]|$)/i.test(x))return 'video';if(/\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)/i.test(x))return 'image';}return null;}catch(x){return null;}}function __slimOpenMedia(e){var t=e.target;var v=t&&t.closest?t.closest('video'):null;if(v){var src=v.currentSrc||v.src||'';if(src&&window.SlimBridge){try{if(SlimBridge.openMedia('video',src,location.href))return true;}catch(x){}}}var img=t&&t.closest?t.closest('img'):null;if(img){var src=img.currentSrc||img.src||img.getAttribute('src')||'';if(src&&window.SlimBridge){try{if(SlimBridge.openMedia('image',src,location.href))return true;}catch(x){}}}return false;}document.addEventListener('click',function(e){if(__slimOpenMedia(e)){e.preventDefault();e.stopImmediatePropagation();return;}var a=e.target&&e.target.closest?e.target.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;var h=a?(a.href||''):'';e.preventDefault();e.stopImmediatePropagation();var type=h?__slimMediaType(h):null;if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href))return;}catch(x){}}if(window.SlimBridge&&h){try{SlimBridge.checkNav(h);}catch(x){}}},true);document.addEventListener('pointerdown',function(e){if(e.target&&e.target.closest&&e.target.closest('img,video')){e.preventDefault();e.stopImmediatePropagation();return;}var a=e.target&&e.target.closest?e.target.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;if(a){var h=a.href||'';if(h&&window.SlimBridge){try{var u=new URL(h,location.href);if(u.href!==location.href){e.preventDefault();e.stopImmediatePropagation();}}catch(x){e.preventDefault();e.stopImmediatePropagation();}}}},true);}""")
+            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;function __slimMediaType(h){try{var u=new URL(h,location.href),p=(u.pathname||'').toLowerCase(),q=(u.search||'').toLowerCase(),x=u.href.toLowerCase();if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/permalink.php')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1||q.indexOf('set=a.')!==-1)return 'image';if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)return 'video';if((u.hostname||'').toLowerCase().indexOf('fbcdn.net')!==-1){if(/\.(mp4|webm|mov|m3u8)(?:[?#]|$)/i.test(x))return 'video';if(/\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)/i.test(x))return 'image';}return null;}catch(x){return null;}}function __slimElementAt(e){var t=e&&e.target;if(t&&t.nodeType===3)t=t.parentElement;if(t&&t.closest)return t;var x=0,y=0;try{if(e.touches&&e.touches.length){x=e.touches[0].clientX;y=e.touches[0].clientY;}else{x=e.clientX||0;y=e.clientY||0;}}catch(_){ }try{var z=document.elementFromPoint(x,y);if(z)return z;}catch(_){ }return t;}function __slimMediaElement(e){var t=__slimElementAt(e);if(!t)return null;var v=t.closest?t.closest('video'):null;if(v)return {type:'video',url:v.currentSrc||v.src||''};var img=t.closest?t.closest('img'):null;if(img)return {type:'image',url:img.currentSrc||img.src||img.getAttribute('src')||''};return null;}function __slimOpenMedia(e){var m=__slimMediaElement(e);if(!m||!m.url||!window.SlimBridge)return false;try{if(m.type==='image'){return !!SlimBridge.openRestrictedImage(m.url,location.href);}return !!SlimBridge.openMedia(m.type,m.url,location.href);}catch(x){return false;}}function __slimHandle(e){var m=__slimMediaElement(e);if(m&&m.url&&__slimOpenMedia(e)){e.preventDefault();e.stopImmediatePropagation();return true;}var t=__slimElementAt(e);var a=t&&t.closest?t.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;var h=a?(a.href||''):'';if(h){var type=__slimMediaType(h);if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href)){e.preventDefault();e.stopImmediatePropagation();return true;}}catch(x){}}e.preventDefault();e.stopImmediatePropagation();try{SlimBridge.checkNav(h);}catch(x){}return true;}return false;}['pointerdown','touchend','click'].forEach(function(evt){document.addEventListener(evt,function(e){__slimHandle(e);},true);});}""")
         }
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
@@ -1345,65 +1345,46 @@ class MainActivity : Activity() {
     // parent/link/div instead of the <img> itself. This native-gated overlay sits above
     // every sufficiently large image and consumes the tap before Facebook can navigate.
     // It opens ONLY the image through openRestrictedImage(); it never opens the page.
+    // Media-only touch handler. It does NOT place an overlay over images.
+    // The original Facebook image remains touchable; only its navigation is intercepted.
+    // Native SlimBridge decides whether the media is allowed, while page navigation stays blocked.
     private fun installRestrictedImageTouchLayer() {
         if (!web.settings.javaScriptEnabled) return
         val js = """
-        (function(){
-          try {
-            if (window.__slimRestrictedImageLayer) {
-              window.__slimRestrictedImageLayer.refresh();
-              return;
-            }
-            var root=document.createElement('div');
-            root.id='slim-restricted-image-touch-root';
-            root.style.cssText='position:fixed;inset:0;z-index:2147483000;pointer-events:none;';
-            (document.body||document.documentElement).appendChild(root);
-            var items=[];
-            function clean(){
-              items.forEach(function(x){try{x.remove();}catch(e){}});
-              items=[];
-            }
-            function valid(img){
-              if(!img || img.tagName!=='IMG') return false;
-              var r=img.getBoundingClientRect();
-              return r.width>=55 && r.height>=55 && (img.currentSrc||img.src);
-            }
-            function refresh(){
-              clean();
-              var imgs=Array.prototype.slice.call(document.images||[]);
-              imgs.forEach(function(img){
-                if(!valid(img)) return;
-                var r=img.getBoundingClientRect();
-                if(r.bottom<0 || r.right<0 || r.top>innerHeight || r.left>innerWidth) return;
-                var b=document.createElement('div');
-                b.setAttribute('data-slim-image-touch','1');
-                b.style.cssText='position:fixed;left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;pointer-events:auto;background:transparent;';
-                function open(e){
-                  try {
-                    if(e){e.preventDefault();e.stopPropagation();if(e.stopImmediatePropagation)e.stopImmediatePropagation();}
-                  }catch(_){}
-                  var u=img.currentSrc||img.src||'';
-                  if(window.SlimBridge && SlimBridge.openRestrictedImage){
-                    SlimBridge.openRestrictedImage(u,location.href);
-                  }
-                  return false;
+            (function(){
+              try {
+                if(window.__slimRestrictedImageLayerInstalled) return;
+                window.__slimRestrictedImageLayerInstalled=true;
+                if(window.__slimRestrictedMediaGuardInstalled) return;
+                window.__slimRestrictedMediaGuardInstalled=true;
+                function target(e){
+                  var t=e&&e.target;
+                  if(t&&t.nodeType===3)t=t.parentElement;
+                  if(t&&t.closest)return t;
+                  var x=0,y=0;
+                  try{if(e.touches&&e.touches.length){x=e.touches[0].clientX;y=e.touches[0].clientY;}else{x=e.clientX||0;y=e.clientY||0;}}catch(_){ }
+                  try{return document.elementFromPoint(x,y)||t;}catch(_){return t;}
                 }
-                b.addEventListener('touchstart',open,{capture:true,passive:false});
-                b.addEventListener('touchend',open,{capture:true,passive:false});
-                b.addEventListener('pointerdown',open,{capture:true,passive:false});
-                b.addEventListener('click',open,{capture:true,passive:false});
-                root.appendChild(b);
-                items.push(b);
-              });
-            }
-            window.__slimRestrictedImageLayer={refresh:refresh};
-            refresh();
-            window.addEventListener('scroll',refresh,true);
-            window.addEventListener('resize',refresh,true);
-            new MutationObserver(function(){setTimeout(refresh,50);}).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['src','style','class']});
-            setInterval(refresh,1000);
-          }catch(e){}
-        })();
+                function media(e){
+                  var t=target(e); if(!t)return null;
+                  var v=t.closest?t.closest('video'):null;
+                  if(v)return {type:'video',url:v.currentSrc||v.src||''};
+                  var i=t.closest?t.closest('img'):null;
+                  if(i)return {type:'image',url:i.currentSrc||i.src||i.getAttribute('src')||''};
+                  return null;
+                }
+                function handle(e){
+                  var m=media(e);
+                  if(m&&m.url&&window.SlimBridge){
+                    try{
+                      var ok=(m.type==='image') ? SlimBridge.openRestrictedImage(m.url,location.href) : SlimBridge.openMedia(m.type,m.url,location.href);
+                      if(ok){e.preventDefault();e.stopImmediatePropagation();return;}
+                    }catch(_){ }
+                  }
+                }
+                ['pointerdown','touchend','click'].forEach(function(n){document.addEventListener(n,handle,true);});
+              }catch(_){ }
+            })();
         """.trimIndent()
         web.evaluateJavascript(js, null)
     }

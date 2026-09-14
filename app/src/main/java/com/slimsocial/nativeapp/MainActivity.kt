@@ -48,6 +48,7 @@ class MainActivity : Activity() {
     @Volatile private var blockedNavigationGeneration: Long = 0L
     private var blockedPageBaseUrl: String? = null
     private var restrictedCustomPageUrl: String? = null
+    private var pendingMediaOnlyExceptionUrl: String? = null
     private val usageHandler = Handler(Looper.getMainLooper())
     private var usageRunning = false
 
@@ -127,7 +128,7 @@ class MainActivity : Activity() {
                 // IMPORTANT: a restricted page never grants navigation permission to a
                 // media-looking URL. Media exceptions are opened only through the validated
                 // SlimBridge.openMedia() path, so repeated taps cannot turn into navigation.
-                if (restrictedCustomPageUrl == null && prefs.getBoolean("media_viewer", true)) {
+                if (restrictedCustomPageUrl == null && pendingMediaOnlyExceptionUrl == null && prefs.getBoolean("media_viewer", true)) {
                     val media = detectMediaViewerUrl(url)
                     if (media != null) {
                         extractMediaViaHiddenWebView(url, media)
@@ -149,10 +150,16 @@ class MainActivity : Activity() {
                     v.post { v.loadUrl(lockedUrl) }
                     return
                 }
-                // If an exception is being used in media-only mode, the exception URL
-                // itself may be opened once. Immediately after navigation starts it becomes
-                // the single locked origin; all subsequent navigation is blocked.
-                if (isMediaOnlyCustomException(url) && restrictedCustomPageUrl == null) {
+                // A media-only exception is a one-time entry point. Lock the exact
+                // configured origin as soon as navigation starts, even if Facebook first
+                // redirects through a slightly different URL/query string.
+                val pending = pendingMediaOnlyExceptionUrl
+                if (pending != null && (normalizeUrl(url) == pending || isMediaOnlyCustomException(url))) {
+                    restrictedCustomPageUrl = normalizeUrl(url)
+                    blockedPageBaseUrl = normalizeUrl(url)
+                    pendingMediaOnlyExceptionUrl = null
+                    blockedNavigationUrl = null
+                } else if (isMediaOnlyCustomException(url) && restrictedCustomPageUrl == null) {
                     restrictedCustomPageUrl = normalizeUrl(url)
                     blockedPageBaseUrl = normalizeUrl(url)
                     blockedNavigationUrl = null
@@ -462,8 +469,10 @@ class MainActivity : Activity() {
             // arbitrary blocked pages into allowed pages.
             if (isException && !fullExceptions) {
                 if (mediaOnlyException) {
-                    // This configured exception is itself a media-only origin. The initial
-                    // navigation is allowed; onPageStarted converts it into a locked origin.
+                    // Mark the exact configured exception as a one-time media-only entry.
+                    // Do NOT set restrictedCustomPageUrl here because this call is the
+                    // navigation that must be allowed to load the exception itself.
+                    pendingMediaOnlyExceptionUrl = u
                     return false
                 }
                 // Exception without an enabled media type is NOT a media permission.
@@ -566,6 +575,7 @@ class MainActivity : Activity() {
     private fun clearRestrictedSession() {
         restrictedCustomPageUrl = null
         blockedPageBaseUrl = null
+        pendingMediaOnlyExceptionUrl = null
         blockedNavigationUrl = null
         blockedNavigationGeneration++
     }
@@ -825,7 +835,7 @@ class MainActivity : Activity() {
             // native bridge approves. This prevents Facebook's SPA router from turning
             // a media exception into permission to visit profiles, pages, groups, posts,
             // search, reels, or any other destination.
-            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href],[role="link"],[role="button"]'):null;if(!a){e.preventDefault();e.stopImmediatePropagation();return;}var h=a.href||'';var p='';var q='';try{var u=new URL(h,location.href);p=u.pathname.toLowerCase();q=u.search.toLowerCase();}catch(x){e.preventDefault();e.stopImmediatePropagation();return;}var type=null;if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||(q.indexOf('fbid=')!==-1&&(p==='/permalink.php'||p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0)))type='image';else if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/reel/')===0||p==='/watch'||(q.indexOf('v=')!==-1&&(p==='/watch'||p==='/video.php')))type='video';e.preventDefault();e.stopImmediatePropagation();if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href))return;}catch(x){}}if(window.SlimBridge){try{SlimBridge.checkNav(h);}catch(x){} }},true);document.addEventListener('pointerdown',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href],[role="link"],[role="button"]'):null;if(a){var h=a.href||'';if(h&&window.SlimBridge){try{var u=new URL(h,location.href);if(u.href!==location.href){e.preventDefault();e.stopImmediatePropagation();}}catch(x){e.preventDefault();e.stopImmediatePropagation();}}}},true);}""")
+            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href],[role="link"],[role="button"]'):null;if(!a){e.preventDefault();e.stopImmediatePropagation();return;}var h=a.href||'';var p='';var q='';try{var u=new URL(h,location.href);p=u.pathname.toLowerCase();q=u.search.toLowerCase();}catch(x){e.preventDefault();e.stopImmediatePropagation();return;}var type=null;if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/photo')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1)type='image';else if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)type='video';e.preventDefault();e.stopImmediatePropagation();if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href))return;}catch(x){}}if(window.SlimBridge){try{SlimBridge.checkNav(h);}catch(x){} }},true);document.addEventListener('pointerdown',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href],[role="link"],[role="button"]'):null;if(a){var h=a.href||'';if(h&&window.SlimBridge){try{var u=new URL(h,location.href);if(u.href!==location.href){e.preventDefault();e.stopImmediatePropagation();}}catch(x){e.preventDefault();e.stopImmediatePropagation();}}}},true);}""")
         }
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
@@ -929,6 +939,9 @@ class MainActivity : Activity() {
         swAllowImages.isChecked = prefs.getBoolean("custom_block_allow_images", false)
         swAllowImages.setOnCheckedChangeListener { _, v ->
             prefs.edit().putBoolean("custom_block_allow_images", v).apply()
+            pendingMediaOnlyExceptionUrl = null
+            if (!v && !prefs.getBoolean("custom_block_allow_videos", false)) clearRestrictedSession()
+            if (!isAuth(web.url ?: "")) { applyControls(); web.reload() }
         }
         box.addView(swAllowImages)
 
@@ -937,6 +950,9 @@ class MainActivity : Activity() {
         swAllowVideos.isChecked = prefs.getBoolean("custom_block_allow_videos", false)
         swAllowVideos.setOnCheckedChangeListener { _, v ->
             prefs.edit().putBoolean("custom_block_allow_videos", v).apply()
+            pendingMediaOnlyExceptionUrl = null
+            if (!v && !prefs.getBoolean("custom_block_allow_images", false)) clearRestrictedSession()
+            if (!isAuth(web.url ?: "")) { applyControls(); web.reload() }
         }
         box.addView(swAllowVideos)
 
@@ -1158,11 +1174,13 @@ class MainActivity : Activity() {
         val query = uri.query?.lowercase() ?: ""
 
         if (path.startsWith("/videos/") || path == "/video.php" ||
-            path.startsWith("/reel/") || path == "/watch" ||
-            query.contains("v=") && (path == "/watch" || path == "/video.php")) return "video"
+            path.startsWith("/video/") || path.startsWith("/reel/") ||
+            path == "/watch" || path.startsWith("/watch/") ||
+            query.contains("v=") || query.contains("video_id=")) return "video"
 
         if (path == "/photo.php" || path.startsWith("/photo/") ||
-            path.startsWith("/photos/") || query.contains("fbid=")) return "image"
+            path.startsWith("/photos/") || path.startsWith("/photo") ||
+            query.contains("fbid=") || query.contains("photo_id=")) return "image"
 
         return null
     }

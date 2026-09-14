@@ -813,11 +813,17 @@ class MainActivity : Activity() {
         } else {
             js.append("if(!window.__slimSpaGuard){window.__slimSpaGuard=true;window.__slimLastUrl=location.href;function slimCheckSpa(){if(location.href!==window.__slimLastUrl){window.__slimLastUrl=location.href;if(window.SlimBridge)SlimBridge.checkNav(location.href);}}var _ps=history.pushState;history.pushState=function(){_ps.apply(history,arguments);slimCheckSpa();};var _rs=history.replaceState;history.replaceState=function(){_rs.apply(history,arguments);slimCheckSpa();};window.addEventListener('popstate',slimCheckSpa);setInterval(slimCheckSpa,600);}")
         }
-        // PHOTO FEED MODE: turn Facebook multi-photo grids into a clean vertical reader.
-        // Each real photo is shown fully, one per row, with a small gap. Facebook's
-        // collage background/borders/overlays are neutralized without touching post text.
+        // PHOTO FEED MODE is explicitly controlled by the user setting.
+        // When OFF, do not touch Facebook's normal photo layout at all.
+        val verticalPhotoMode = prefs.getBoolean("vertical_photo_mode", false)
+        if (verticalPhotoMode) {
         js.append("""if(!window.__slimVerticalPhotos){window.__slimVerticalPhotos=true;function __slimPhotoSize(i){var r=i.getBoundingClientRect();return r.width>=90&&r.height>=60&&(i.naturalWidth||0)>=160&&(i.naturalHeight||0)>=120;}function __slimPhotoPass(){var imgs=Array.from(document.querySelectorAll('img')).filter(__slimPhotoSize);var seen=[];imgs.forEach(function(img){var a=img.parentElement,chosen=null;for(var d=0;a&&d<9;d++,a=a.parentElement){var cs=Array.from(a.querySelectorAll('img')).filter(__slimPhotoSize);if(cs.length>=2&&cs.length<=20){chosen=a;break;}}if(!chosen||seen.indexOf(chosen)!==-1)return;var photos=Array.from(chosen.querySelectorAll('img')).filter(__slimPhotoSize);if(photos.length<2)return;seen.push(chosen);chosen.classList.add('slim-vertical-photo-group');chosen.style.setProperty('display','block','important');chosen.style.setProperty('width','100%','important');chosen.style.setProperty('height','auto','important');chosen.style.setProperty('max-width','100%','important');chosen.style.setProperty('background','transparent','important');chosen.style.setProperty('border','0','important');chosen.style.setProperty('box-shadow','none','important');chosen.style.setProperty('overflow','visible','important');photos.forEach(function(x,index){var n=x;for(var j=0;j<7&&n.parentElement&&n.parentElement!==chosen;j++){n=n.parentElement;n.style.setProperty('display','block','important');n.style.setProperty('width','100%','important');n.style.setProperty('max-width','100%','important');n.style.setProperty('height','auto','important');n.style.setProperty('min-height','0','important');n.style.setProperty('background','transparent','important');n.style.setProperty('border','0','important');n.style.setProperty('box-shadow','none','important');n.style.setProperty('padding','0','important');n.style.setProperty('overflow','visible','important');if(n.parentElement===chosen){n.style.setProperty('margin',index<photos.length-1?'0 0 8px 0':'0','important');}}x.classList.add('slim-vertical-photo');x.style.setProperty('display','block','important');x.style.setProperty('visibility','visible','important');x.style.setProperty('opacity','1','important');x.style.setProperty('width','100%','important');x.style.setProperty('height','auto','important');x.style.setProperty('max-width','100%','important');x.style.setProperty('min-height','0','important');x.style.setProperty('object-fit','contain','important');x.style.setProperty('background','transparent','important');x.style.setProperty('border','0','important');x.style.setProperty('box-shadow','none','important');try{x.setAttribute('loading','eager');}catch(e){}});var overlays=chosen.querySelectorAll('[aria-label*="more photo" i],[aria-label*="المزيد" i],[aria-label*="صور أخرى" i],[data-visualcompletion*="overlay" i]');overlays.forEach(function(o){if(!o.querySelector('img')&&o.textContent.trim().length<40){o.style.setProperty('display','none','important');o.style.setProperty('pointer-events','none','important');}});});}__slimVerticalPhotoPass();if(!window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver=new MutationObserver(function(){clearTimeout(window.__slimVerticalPhotoTimer);window.__slimVerticalPhotoTimer=setTimeout(__slimVerticalPhotoPass,180);});window.__slimVerticalPhotoObserver.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class','src']);}}""")
         js.append("s+='html,body{max-width:100%!important;overflow-x:hidden!important;} .slim-vertical-photo-group{background:transparent!important;border:0!important;box-shadow:none!important;} .slim-vertical-photo-group img.slim-vertical-photo{display:block!important;visibility:visible!important;opacity:1!important;width:100%!important;height:auto!important;max-width:100%!important;min-height:0!important;object-fit:contain!important;background:transparent!important;border:0!important;box-shadow:none!important;} .slim-vertical-photo-group img.slim-vertical-photo+img.slim-vertical-photo{margin-top:8px!important;}';")
+        } else {
+            // Remove any previous mode injected into the current SPA document when the
+            // user switches the setting OFF.
+            js.append("if(window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver.disconnect();window.__slimVerticalPhotoObserver=null;}document.querySelectorAll('.slim-vertical-photo-group').forEach(function(e){e.classList.remove('slim-vertical-photo-group');});document.querySelectorAll('.slim-vertical-photo').forEach(function(e){e.classList.remove('slim-vertical-photo');});")
+        }
         val keywords = getKeywordList()
         val kwJson = "[" + keywords.joinToString(",") { JSONObject.quote(it) } + "]"
         js.append("window.__slimKeywords=").append(kwJson).append(";")
@@ -871,6 +877,24 @@ class MainActivity : Activity() {
         box.addView(swMessageBtn)
 
         val sep1 = TextView(this); sep1.text="— خيارات إضافية —"; sep1.setPadding(0,20,0,10); sep1.setTextColor(Color.GRAY); box.addView(sep1)
+
+        val swVerticalPhotos = Switch(this)
+        swVerticalPhotos.text = "عرض صور المنشورات عموديًا (صورة كاملة تحت صورة)"
+        swVerticalPhotos.isChecked = prefs.getBoolean("vertical_photo_mode", false)
+        swVerticalPhotos.setOnCheckedChangeListener { _, v ->
+            prefs.edit().putBoolean("vertical_photo_mode", v).apply()
+            if (!isAuth(web.url ?: "")) {
+                applyControls()
+                web.reload()
+            }
+        }
+        box.addView(swVerticalPhotos)
+
+        val verticalPhotoInfo = TextView(this)
+        verticalPhotoInfo.text = "عند التفعيل: الصور المتعددة في المنشور تظهر كاملة، صورة تحت صورة، مع مسافة صغيرة وبدون شبكة الصور المعتادة. عند الإيقاف يعود عرض فيسبوك الطبيعي."
+        verticalPhotoInfo.setTextColor(Color.GRAY)
+        verticalPhotoInfo.setPadding(0, 0, 0, 10)
+        box.addView(verticalPhotoInfo)
 
         val swImages = Switch(this); swImages.text="منع عرض الصور"; swImages.isChecked=prefs.getBoolean("block_images",false)
         swImages.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_images",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }

@@ -876,329 +876,365 @@ class MainActivity : Activity() {
     }
 
     private fun showControls() {
-        val box=LinearLayout(this); box.orientation=LinearLayout.VERTICAL; box.setPadding(32,12,32,8)
-        val title=TextView(this); title.text="سليم سوشيال • إعدادات فيسبوك"; title.textSize=20f; title.setTextColor(Color.DKGRAY); title.setPadding(0,8,0,18); box.addView(title)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 12, 24, 8)
+        }
 
-        val counter = TextView(this); counter.text="المحاولات المحظورة: ${prefs.getInt("blocked_count",0)}"; counter.setPadding(0,0,0,16); box.addView(counter)
+        val title = TextView(this).apply {
+            text = "سليم سوشيال • إعدادات فيسبوك"
+            textSize = 21f
+            setTextColor(Color.DKGRAY)
+            setPadding(0, 6, 0, 6)
+        }
+        box.addView(title)
 
-        blocks.forEach { name -> val sw=Switch(this); sw.text=arabicLabels[name] ?: name; sw.textSize=16f; sw.isChecked=prefs.getBoolean(name,false); sw.setPadding(0,10,0,10); sw.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean(name,v).apply(); if(!isAuth(web.url ?: "")) applyControls() }; box.addView(sw) }
+        val counter = TextView(this).apply {
+            text = "المحاولات المحظورة: ${prefs.getInt("blocked_count", 0)}"
+            textSize = 13f
+            setTextColor(Color.GRAY)
+            setPadding(0, 0, 0, 14)
+        }
+        box.addView(counter)
 
-        val swMessageBtn = Switch(this); swMessageBtn.text="مراسلة (زر مراسلة الصفحات)"; swMessageBtn.textSize=16f; swMessageBtn.isChecked=prefs.getBoolean("block_message_btn",false); swMessageBtn.setPadding(0,10,0,10)
-        swMessageBtn.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_message_btn",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swMessageBtn)
-
-        val sep1 = TextView(this); sep1.text="— خيارات إضافية —"; sep1.setPadding(0,20,0,10); sep1.setTextColor(Color.GRAY); box.addView(sep1)
-
-        val swVerticalPhotos = Switch(this)
-        swVerticalPhotos.text = "عرض صور المنشورات عموديًا (صورة كاملة تحت صورة)"
-        swVerticalPhotos.isChecked = prefs.getBoolean("vertical_photo_mode", false)
-        swVerticalPhotos.setOnCheckedChangeListener { _, v ->
-            prefs.edit().putBoolean("vertical_photo_mode", v).apply()
-            if (!isAuth(web.url ?: "")) {
-                applyControls()
-                web.reload()
+        // Collapsible sections keep the main settings screen short and readable.
+        fun section(titleText: String, icon: String, open: Boolean = false): LinearLayout {
+            val wrapper = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val content = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(10, 4, 10, 10)
+                visibility = if (open) View.VISIBLE else View.GONE
             }
-        }
-        box.addView(swVerticalPhotos)
-
-        val verticalPhotoInfo = TextView(this)
-        verticalPhotoInfo.text = "عند التفعيل: الصور المتعددة في المنشور تظهر كاملة، صورة تحت صورة، مع مسافة صغيرة وبدون شبكة الصور المعتادة. عند الإيقاف يعود عرض فيسبوك الطبيعي."
-        verticalPhotoInfo.setTextColor(Color.GRAY)
-        verticalPhotoInfo.setPadding(0, 0, 0, 10)
-        box.addView(verticalPhotoInfo)
-
-        val swImages = Switch(this); swImages.text="منع عرض الصور"; swImages.isChecked=prefs.getBoolean("block_images",false)
-        swImages.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_images",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swImages)
-
-        val swVideos = Switch(this); swVideos.text="منع عرض الفيديوهات"; swVideos.isChecked=prefs.getBoolean("block_videos",false)
-        swVideos.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_videos",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swVideos)
-
-        val swSwipe = Switch(this); swSwipe.text="منع سحب الشاشة للتنقل بين الفيديوهات"; swSwipe.isChecked=prefs.getBoolean("block_video_swipe",false)
-        swSwipe.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_video_swipe",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swSwipe)
-
-        val swVideoSwipeCombo = Switch(this); swVideoSwipeCombo.text="منع الفيديو والسحب معًا (تفعيل الاثنين دفعة واحدة)"; swVideoSwipeCombo.isChecked = prefs.getBoolean("block_videos",false) && prefs.getBoolean("block_video_swipe",false)
-        swVideoSwipeCombo.setOnCheckedChangeListener { _,v ->
-            prefs.edit().putBoolean("block_videos",v).putBoolean("block_video_swipe",v).apply()
-            swVideos.isChecked = v
-            swSwipe.isChecked = v
-            if(!isAuth(web.url ?: "")) applyControls()
-        }
-        box.addView(swVideoSwipeCombo)
-
-        val swProfileNav = Switch(this); swProfileNav.text="منع زيارة أي بروفايل / صفحة / مجموعة"; swProfileNav.isChecked=prefs.getBoolean("block_profile_nav",false)
-        swProfileNav.setOnCheckedChangeListener { _,v ->
-            prefs.edit().putBoolean("block_profile_nav",v).apply()
-            if (!isAuth(web.url ?: "")) {
-                if (handleNavigation(web.url ?: "")) web.loadUrl(getHomeUrl())
-                else applyControls()
+            val header = TextView(this).apply {
+                text = if (open) "$icon  $titleText   ▲" else "$icon  $titleText   ▼"
+                textSize = 17f
+                setTextColor(Color.DKGRAY)
+                setPadding(14, 15, 14, 15)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(245, 245, 245))
+                    cornerRadius = 14f
+                }
+                setOnClickListener {
+                    val show = content.visibility != View.VISIBLE
+                    content.visibility = if (show) View.VISIBLE else View.GONE
+                    text = if (show) "$icon  $titleText   ▲" else "$icon  $titleText   ▼"
+                }
             }
+            wrapper.addView(header)
+            wrapper.addView(content)
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, 0, 8)
+            box.addView(wrapper, lp)
+            return content
         }
-        box.addView(swProfileNav)
 
-        val swTopNav = Switch(this); swTopNav.text="إخفاء القائمة العلوية لفيسبوك (أينما كانت)"; swTopNav.isChecked=prefs.getBoolean("block_top_nav",false)
-        swTopNav.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_top_nav",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swTopNav)
-
-        val swFreeze = Switch(this); swFreeze.text="تجميد الصفحة بالكامل (تمرير فقط + فتح الصور/الفيديوهات المسموحة)"; swFreeze.isChecked=prefs.getBoolean("freeze_page",false)
-        swFreeze.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("freeze_page",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swFreeze)
-
-        val swMediaViewer = Switch(this); swMediaViewer.text="فتح الصور والفيديوهات داخل التطبيق (منع عارض فيسبوك الخارجي بأزراره)"; swMediaViewer.isChecked=prefs.getBoolean("media_viewer",true)
-        swMediaViewer.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("media_viewer",v).apply() }
-        box.addView(swMediaViewer)
-
-        val swExternal = Switch(this); swExternal.text="منع الروابط الخارجية"; swExternal.isChecked=prefs.getBoolean("block_external",false)
-        swExternal.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_external",v).apply() }
-        box.addView(swExternal)
-
-        val swSilent = Switch(this)
-        swSilent.text = "الوضع الصامت: إخفاء رسائل الحظر والتنبيهات"
-        swSilent.isChecked = prefs.getBoolean("silent_notifications", false)
-        swSilent.setOnCheckedChangeListener { _, v ->
-            prefs.edit().putBoolean("silent_notifications", v).apply()
+        fun addSwitch(parent: LinearLayout, key: String, label: String, refresh: Boolean = true) {
+            val sw = Switch(this).apply {
+                text = label
+                textSize = 16f
+                isChecked = prefs.getBoolean(key, false)
+                setPadding(4, 8, 4, 8)
+            }
+            sw.setOnCheckedChangeListener { _, value ->
+                prefs.edit().putBoolean(key, value).apply()
+                if (refresh && !isAuth(web.url ?: "")) applyControls()
+            }
+            parent.addView(sw)
         }
-        box.addView(swSilent)
 
-        val sepCustomBlock = TextView(this); sepCustomBlock.text="— قائمة حظر مخصصة —"; sepCustomBlock.setPadding(0,16,0,6); sepCustomBlock.setTextColor(Color.GRAY); box.addView(sepCustomBlock)
+        val basic = section("الحظر الأساسي", "🛡️", true)
+        blocks.forEach { name ->
+            val sw = Switch(this).apply {
+                text = arabicLabels[name] ?: name
+                textSize = 16f
+                isChecked = prefs.getBoolean(name, false)
+                setPadding(4, 8, 4, 8)
+            }
+            sw.setOnCheckedChangeListener { _, value ->
+                prefs.edit().putBoolean(name, value).apply()
+                if (!isAuth(web.url ?: "")) applyControls()
+            }
+            basic.addView(sw)
+        }
+        addSwitch(basic, "block_message_btn", "مراسلة (زر مراسلة الصفحات)")
 
-        val swCustomBlock = Switch(this); swCustomBlock.text="تفعيل قائمة الحظر المخصصة"; swCustomBlock.isChecked=prefs.getBoolean("custom_block_enabled",false)
-        swCustomBlock.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("custom_block_enabled",v).apply() }
-        box.addView(swCustomBlock)
-
-        val blockDomainsLabel = TextView(this); blockDomainsLabel.text="روابط/نطاقات للحظر (افصل بفاصلة ,) — مثال: www.facebook.com,m.facebook.com"; blockDomainsLabel.setPadding(0,8,0,4); box.addView(blockDomainsLabel)
-        val blockDomainsInput = EditText(this); blockDomainsInput.setText(prefs.getString("custom_block_domains","")); box.addView(blockDomainsInput)
-
-        val exceptionsLabel = TextView(this); exceptionsLabel.text="استثناءات مسموحة رغم الحظر أعلاه (افصل بفاصلة ,) — مثال: facebook.com/groups/113344129011322"; exceptionsLabel.setPadding(0,10,0,4); box.addView(exceptionsLabel)
-        val exceptionsInput = EditText(this); exceptionsInput.setText(prefs.getString("custom_block_exceptions","")); box.addView(exceptionsInput)
-
-        val swAllowImages = Switch(this)
-        swAllowImages.text = "السماح بالصور فقط داخل رابط موجود في الاستثناءات"
-        swAllowImages.isChecked = prefs.getBoolean("custom_block_allow_images", false)
-        swAllowImages.setOnCheckedChangeListener { _, v ->
-            prefs.edit().putBoolean("custom_block_allow_images", v).apply()
-            pendingMediaOnlyExceptionUrl = null
-            if (!v && !prefs.getBoolean("custom_block_allow_videos", false)) clearRestrictedSession()
+        val media = section("الصور والفيديو والوسائط", "🖼️")
+        val swVerticalPhotos = Switch(this).apply {
+            text = "عرض صور المنشورات عموديًا (صورة كاملة تحت صورة)"
+            isChecked = prefs.getBoolean("vertical_photo_mode", false)
+            setPadding(4, 8, 4, 8)
+        }
+        swVerticalPhotos.setOnCheckedChangeListener { _, value ->
+            prefs.edit().putBoolean("vertical_photo_mode", value).apply()
             if (!isAuth(web.url ?: "")) { applyControls(); web.reload() }
         }
-        box.addView(swAllowImages)
+        media.addView(swVerticalPhotos)
+        media.addView(TextView(this).apply {
+            text = "عند التفعيل تظهر الصور المتعددة صورة تحت صورة بدل شبكة الصور."
+            setTextColor(Color.GRAY); textSize = 12f; setPadding(4, 0, 4, 8)
+        })
+        addSwitch(media, "block_images", "منع عرض الصور")
+        addSwitch(media, "block_videos", "منع عرض الفيديوهات")
+        addSwitch(media, "block_video_swipe", "منع سحب الشاشة للتنقل بين الفيديوهات")
+        val swVideoSwipeCombo = Switch(this).apply {
+            text = "منع الفيديو والسحب معًا"
+            isChecked = prefs.getBoolean("block_videos", false) && prefs.getBoolean("block_video_swipe", false)
+            setPadding(4, 8, 4, 8)
+        }
+        swVideoSwipeCombo.setOnCheckedChangeListener { _, value ->
+            prefs.edit().putBoolean("block_videos", value).putBoolean("block_video_swipe", value).apply()
+            if (!isAuth(web.url ?: "")) applyControls()
+        }
+        media.addView(swVideoSwipeCombo)
+        addSwitch(media, "media_viewer", "فتح الصور والفيديوهات داخل التطبيق", refresh = false)
 
-        val swAllowVideos = Switch(this)
-        swAllowVideos.text = "السماح بالفيديو فقط داخل رابط موجود في الاستثناءات"
-        swAllowVideos.isChecked = prefs.getBoolean("custom_block_allow_videos", false)
-        swAllowVideos.setOnCheckedChangeListener { _, v ->
-            prefs.edit().putBoolean("custom_block_allow_videos", v).apply()
+        val navigation = section("التنقل والصفحات", "🧭")
+        addSwitch(navigation, "block_profile_nav", "منع زيارة أي بروفايل / صفحة / مجموعة", refresh = false)
+        addSwitch(navigation, "block_top_nav", "إخفاء القائمة العلوية لفيسبوك (أينما كانت)")
+        addSwitch(navigation, "freeze_page", "تجميد الصفحة بالكامل (تمرير فقط + فتح الوسائط المسموحة)")
+        addSwitch(navigation, "block_external", "منع الروابط الخارجية", refresh = false)
+        addSwitch(navigation, "block_join_group", "منع الانضمام إلى مجموعات")
+        addSwitch(navigation, "lock_page_enabled", "قفل الصفحة الحالية", refresh = false)
+
+        val custom = section("قائمة الحظر والاستثناءات", "🚫")
+        addSwitch(custom, "custom_block_enabled", "تفعيل قائمة الحظر المخصصة", refresh = false)
+        val blockDomainsInput = EditText(this).apply {
+            hint = "روابط / نطاقات للحظر — افصل بفاصلة"
+            setText(prefs.getString("custom_block_domains", ""))
+            setSingleLine(false)
+        }
+        custom.addView(blockDomainsInput)
+        val exceptionsInput = EditText(this).apply {
+            hint = "روابط الاستثناءات — افصل بفاصلة"
+            setText(prefs.getString("custom_block_exceptions", ""))
+            setSingleLine(false)
+        }
+        custom.addView(exceptionsInput)
+        val swAllowImages = Switch(this).apply {
+            text = "السماح بالصور فقط داخل رابط موجود في الاستثناءات"
+            isChecked = prefs.getBoolean("custom_block_allow_images", false)
+            setPadding(4, 8, 4, 8)
+        }
+        swAllowImages.setOnCheckedChangeListener { _, value ->
+            prefs.edit().putBoolean("custom_block_allow_images", value).apply()
             pendingMediaOnlyExceptionUrl = null
-            if (!v && !prefs.getBoolean("custom_block_allow_images", false)) clearRestrictedSession()
+            if (!value && !prefs.getBoolean("custom_block_allow_videos", false)) clearRestrictedSession()
             if (!isAuth(web.url ?: "")) { applyControls(); web.reload() }
         }
-        box.addView(swAllowVideos)
-
-        val swFullExceptions = Switch(this)
-        swFullExceptions.text = "السماح بالاستثناءات للوصول الكامل (يعطل وضع الوسائط فقط لهذه الاستثناءات)"
-        swFullExceptions.isChecked = prefs.getBoolean("custom_block_full_exceptions", false)
-        swFullExceptions.setOnCheckedChangeListener { _, v ->
-            prefs.edit().putBoolean("custom_block_full_exceptions", v).apply()
+        custom.addView(swAllowImages)
+        val swAllowVideos = Switch(this).apply {
+            text = "السماح بالفيديو فقط داخل رابط موجود في الاستثناءات"
+            isChecked = prefs.getBoolean("custom_block_allow_videos", false)
+            setPadding(4, 8, 4, 8)
         }
-        box.addView(swFullExceptions)
-
-        val mediaRuleInfo = TextView(this)
-        mediaRuleInfo.text = "الصور/الفيديو مسموحة فقط داخل رابط موجود في قائمة الاستثناءات. لا يتم السماح بأي رابط أو بروفايل أو صفحة أو مجموعة أخرى. اترك الوصول الكامل للاستثناءات متوقفًا."
-        mediaRuleInfo.setTextColor(Color.GRAY)
-        mediaRuleInfo.setPadding(0, 2, 0, 8)
-        box.addView(mediaRuleInfo)
-
-        val addCurrentExceptionBtn = TextView(this); addCurrentExceptionBtn.text="➕ إضافة الرابط الحالي إلى الاستثناءات"; addCurrentExceptionBtn.setTextColor(Color.BLUE); addCurrentExceptionBtn.setPadding(0,6,0,10)
+        swAllowVideos.setOnCheckedChangeListener { _, value ->
+            prefs.edit().putBoolean("custom_block_allow_videos", value).apply()
+            pendingMediaOnlyExceptionUrl = null
+            if (!value && !prefs.getBoolean("custom_block_allow_images", false)) clearRestrictedSession()
+            if (!isAuth(web.url ?: "")) { applyControls(); web.reload() }
+        }
+        custom.addView(swAllowVideos)
+        addSwitch(custom, "custom_block_full_exceptions", "السماح بالاستثناءات للوصول الكامل", refresh = false)
+        custom.addView(TextView(this).apply {
+            text = "إذا كان هذا الخيار مغلقًا، تبقى الاستثناءات مقيدة بالصور/الفيديو فقط عند تفعيلهما."
+            setTextColor(Color.GRAY); textSize = 12f; setPadding(4, 0, 4, 8)
+        })
+        val addCurrentExceptionBtn = Button(this).apply { text = "➕ إضافة الرابط الحالي إلى الاستثناءات" }
         addCurrentExceptionBtn.setOnClickListener {
-            val currentUrl = (web.url ?: "").lowercase()
+            val currentUrl = web.url?.lowercase() ?: ""
             if (currentUrl.isNotEmpty()) {
-                val current = exceptionsInput.text.toString()
-                val list = current.split(",").map{it.trim()}.filter{it.isNotEmpty()}.toMutableList()
+                val list = exceptionsInput.text.toString().split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
                 if (!list.contains(currentUrl)) list.add(currentUrl)
                 exceptionsInput.setText(list.joinToString(","))
-                notifyUser("أُضيف للاستثناءات، لا تنسَ الضغط على حفظ")
+                notifyUser("أُضيف للاستثناءات، اضغط حفظ")
             }
         }
-        box.addView(addCurrentExceptionBtn)
-
-        val swGroups = Switch(this); swGroups.text="منع مجموعات غير مشترك فيها (استثناء يدوي)"; swGroups.isChecked=prefs.getBoolean("block_unjoined_groups",false)
-        swGroups.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_unjoined_groups",v).apply() }
-        box.addView(swGroups)
-
-        val whitelistLabel = TextView(this); whitelistLabel.text="قائمة المجموعات/الصفحات المسموحة (افصل بفاصلة ,)"; whitelistLabel.setPadding(0,10,0,4); box.addView(whitelistLabel)
-        val whitelistInput = EditText(this); whitelistInput.setText(prefs.getString("group_whitelist","")); box.addView(whitelistInput)
-
-        val allowGroupBtn = TextView(this); allowGroupBtn.text="➕ إضافة المجموعة/الصفحة الحالية للقائمة أعلاه"; allowGroupBtn.setTextColor(Color.BLUE); allowGroupBtn.setPadding(0,6,0,10)
+        custom.addView(addCurrentExceptionBtn)
+        addSwitch(custom, "block_unjoined_groups", "منع مجموعات غير مشترك فيها")
+        val whitelistInput = EditText(this).apply {
+            hint = "قائمة المجموعات/الصفحات المسموحة — افصل بفاصلة"
+            setText(prefs.getString("group_whitelist", ""))
+        }
+        custom.addView(whitelistInput)
+        val allowGroupBtn = Button(this).apply { text = "➕ إضافة المجموعة/الصفحة الحالية" }
         allowGroupBtn.setOnClickListener {
-            val currentUrl = web.url ?: ""
-            val id = extractIdentifier(currentUrl.lowercase())
+            val id = extractIdentifier((web.url ?: "").lowercase())
             if (id != null) {
-                val current = whitelistInput.text.toString()
-                val list = current.split(",").map{it.trim()}.filter{it.isNotEmpty()}.toMutableList()
+                val list = whitelistInput.text.toString().split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
                 if (!list.contains(id)) list.add(id)
                 whitelistInput.setText(list.joinToString(","))
-                notifyUser("أُضيفت للقائمة، لا تنسَ الضغط على حفظ")
+                notifyUser("أُضيفت للقائمة، اضغط حفظ")
             } else notifyUser("لا يمكن التعرف على هذه الصفحة")
         }
-        box.addView(allowGroupBtn)
+        custom.addView(allowGroupBtn)
 
-        val sepKeywords = TextView(this); sepKeywords.text="— كلمات تُعيد التوجيه للرئيسية فورًا —"; sepKeywords.setPadding(0,16,0,10); sepKeywords.setTextColor(Color.GRAY); box.addView(sepKeywords)
-        val keywordsLabel = TextView(this); keywordsLabel.text="إذا ظهرت أي من هذه الكلمات في نص الصفحة، يتم الرجوع للرئيسية تلقائيًا (افصل بفاصلة ,)"; keywordsLabel.setPadding(0,0,0,4); box.addView(keywordsLabel)
-        val keywordsInput = EditText(this); keywordsInput.hint="مثال: كلمة1, كلمة2"; keywordsInput.setText(prefs.getString("keyword_blocklist","")); box.addView(keywordsInput)
-
-        val sepBtnWords = TextView(this); sepBtnWords.text="— حظر أزرار حسب نصّها بالضبط —"; sepBtnWords.setPadding(0,16,0,10); sepBtnWords.setTextColor(Color.GRAY); box.addView(sepBtnWords)
-        val btnWordsLabel = TextView(this); btnWordsLabel.text="اكتب النص أو جزء منه كما يظهر على الزر (مثل: متابعة، انضمام) — أي عنصر نصّه يحتوي على هذه الكلمة يُخفى ويُمنع النقر عليه (افصل بفاصلة ,)"; btnWordsLabel.setPadding(0,0,0,4); box.addView(btnWordsLabel)
-        val btnWordsInput = EditText(this); btnWordsInput.hint="مثال: متابعة, انضمام"; btnWordsInput.setText(prefs.getString("button_block_words","")); box.addView(btnWordsInput)
-
-        val swRefresh = Switch(this); swRefresh.text="منع تحديث الصفحة بالكامل"; swRefresh.isChecked=prefs.getBoolean("block_refresh",false)
-        swRefresh.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh",v).apply() }
-        box.addView(swRefresh)
-
-        val swRefreshVideo = Switch(this); swRefreshVideo.text="منع التحديث أثناء تشغيل فيديو فقط"; swRefreshVideo.isChecked=prefs.getBoolean("block_refresh_on_video",false)
-        swRefreshVideo.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_refresh_on_video",v).apply() }
-        box.addView(swRefreshVideo)
-
-        val swDark = Switch(this); swDark.text="وضع داكن إجباري"; swDark.isChecked=prefs.getBoolean("dark_mode",false)
-        swDark.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("dark_mode",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swDark)
-
-        val swHide = Switch(this); swHide.text="إخفاء شريط الأدوات (اضغط 3 مرات متتالية لإظهاره)"; swHide.isChecked=prefs.getBoolean("hide_toolbar",false)
-        swHide.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("hide_toolbar",v).apply(); applyToolbarVisibility(findViewById(R.id.menu), findViewById(R.id.reload)) }
-        box.addView(swHide)
-
-        val limitLabel = TextView(this); limitLabel.text="الحد اليومي (بالدقائق، 0 = بلا حد)"; limitLabel.setPadding(0,16,0,4); box.addView(limitLabel)
-        val limitInput = EditText(this); limitInput.inputType = InputType.TYPE_CLASS_NUMBER; limitInput.setText(prefs.getInt("daily_limit_minutes",0).toString()); box.addView(limitInput)
-
-        val sepSchedule = TextView(this); sepSchedule.text="— جدولة أوقات الاستخدام —"; sepSchedule.setPadding(0,16,0,10); sepSchedule.setTextColor(Color.GRAY); box.addView(sepSchedule)
-        val swSchedule = Switch(this); swSchedule.text="تفعيل الجدولة (السماح بالاستخدام في نطاق ساعات محدد فقط)"; swSchedule.isChecked=prefs.getBoolean("schedule_enabled",false)
-        swSchedule.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("schedule_enabled",v).apply() }
-        box.addView(swSchedule)
-        val startLabel = TextView(this); startLabel.text="من الساعة (0-23)"; startLabel.setPadding(0,8,0,4); box.addView(startLabel)
-        val startInput = EditText(this); startInput.inputType = InputType.TYPE_CLASS_NUMBER; startInput.setText(prefs.getInt("schedule_start_hour",8).toString()); box.addView(startInput)
-        val endLabel = TextView(this); endLabel.text="إلى الساعة (0-24)"; endLabel.setPadding(0,8,0,4); box.addView(endLabel)
-        val endInput = EditText(this); endInput.inputType = InputType.TYPE_CLASS_NUMBER; endInput.setText(prefs.getInt("schedule_end_hour",22).toString()); box.addView(endInput)
-
-        val sepPrivacy = TextView(this); sepPrivacy.text="— خصوصية إضافية —"; sepPrivacy.setPadding(0,16,0,10); sepPrivacy.setTextColor(Color.GRAY); box.addView(sepPrivacy)
-        val swCopy = Switch(this); swCopy.text="منع نسخ النصوص من الصفحة"; swCopy.isChecked=prefs.getBoolean("block_copy",false)
-        swCopy.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_copy",v).apply(); applyCopyProtection(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swCopy)
-        val swScreenshot = Switch(this); swScreenshot.text="منع لقطة الشاشة وتسجيل الشاشة"; swScreenshot.isChecked=prefs.getBoolean("block_screenshot",false)
-        swScreenshot.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_screenshot",v).apply(); applyScreenshotProtection() }
-        box.addView(swScreenshot)
-        val swJoinGroup = Switch(this); swJoinGroup.text="منع الانضمام إلى مجموعات"; swJoinGroup.isChecked=prefs.getBoolean("block_join_group",false)
-        swJoinGroup.setOnCheckedChangeListener { _,v -> prefs.edit().putBoolean("block_join_group",v).apply(); if(!isAuth(web.url ?: "")) applyControls() }
-        box.addView(swJoinGroup)
-        val swLockPage = Switch(this); swLockPage.text="قفل الصفحة الحالية (منع أي تنقّل خارجها فورًا، بدون أي رسالة)"; swLockPage.isChecked=prefs.getBoolean("lock_page_enabled",false)
-        swLockPage.setOnCheckedChangeListener { _,v ->
-            if (v) prefs.edit().putBoolean("lock_page_enabled",true).putString("lock_page_url", web.url ?: getHomeUrl()).apply()
-            else prefs.edit().putBoolean("lock_page_enabled",false).apply()
+        val textRules = section("الكلمات والأزرار", "🔤")
+        val keywordsInput = EditText(this).apply {
+            hint = "كلمات تعيد التوجيه للرئيسية — مثال: كلمة1, كلمة2"
+            setText(prefs.getString("keyword_blocklist", ""))
         }
-        box.addView(swLockPage)
+        textRules.addView(keywordsInput)
+        val btnWordsInput = EditText(this).apply {
+            hint = "نصوص الأزرار التي تريد إخفاءها — مثال: متابعة, انضمام"
+            setText(prefs.getString("button_block_words", ""))
+        }
+        textRules.addView(btnWordsInput)
 
-        val swJs = Switch(this); swJs.text="تعطيل JavaScript بالكامل ⚠️ (يعطّل باقي الخيارات ومعظم فيسبوك)"; swJs.isChecked=prefs.getBoolean("disable_js",false)
-        swJs.setOnCheckedChangeListener { _,v ->
-            if (v) {
+        val usage = section("الوقت والتحديث والمظهر", "⏱️")
+        val limitInput = EditText(this).apply {
+            hint = "الحد اليومي بالدقائق (0 = بلا حد)"
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(prefs.getInt("daily_limit_minutes", 0).toString())
+        }
+        usage.addView(limitInput)
+        addSwitch(usage, "block_refresh", "منع تحديث الصفحة بالكامل", refresh = false)
+        addSwitch(usage, "block_refresh_on_video", "منع التحديث أثناء تشغيل فيديو", refresh = false)
+        addSwitch(usage, "dark_mode", "وضع داكن إجباري")
+        addSwitch(usage, "hide_toolbar", "إخفاء شريط الأدوات (اضغط 3 مرات لإظهاره)", refresh = false)
+        addSwitch(usage, "schedule_enabled", "تفعيل الجدولة")
+        val startInput = EditText(this).apply {
+            hint = "من الساعة (0-23)"
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(prefs.getInt("schedule_start_hour", 8).toString())
+        }
+        val endInput = EditText(this).apply {
+            hint = "إلى الساعة (0-24)"
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(prefs.getInt("schedule_end_hour", 22).toString())
+        }
+        usage.addView(startInput); usage.addView(endInput)
+        addSwitch(usage, "silent_notifications", "الوضع الصامت: إخفاء رسائل الحظر والتنبيهات", refresh = false)
+
+        val privacy = section("الخصوصية والحماية", "🔐")
+        addSwitch(privacy, "block_copy", "منع نسخ النصوص من الصفحة")
+        addSwitch(privacy, "block_screenshot", "منع لقطة الشاشة وتسجيل الشاشة", refresh = false)
+        val swJs = Switch(this).apply {
+            text = "تعطيل JavaScript بالكامل ⚠️"
+            isChecked = prefs.getBoolean("disable_js", false)
+            setPadding(4, 8, 4, 8)
+        }
+        swJs.setOnCheckedChangeListener { _, value ->
+            if (value) {
                 AlertDialog.Builder(this).setTitle("تحذير")
-                    .setMessage("تعطيل JavaScript سيوقف كل خيارات الحظر الأخرى وقد يمنع فيسبوك من العمل نهائيًا. هل تريد المتابعة؟")
-                    .setPositiveButton("نعم، عطّله"){_,_-> prefs.edit().putBoolean("disable_js",true).apply(); notifyUser("أعد تشغيل التطبيق لتفعيل التغيير",Toast.LENGTH_LONG) }
-                    .setNegativeButton("إلغاء"){_,_-> swJs.isChecked=false}.show()
-            } else { prefs.edit().putBoolean("disable_js",false).apply(); notifyUser("أعد تشغيل التطبيق لتفعيل التغيير",Toast.LENGTH_LONG) }
+                    .setMessage("تعطيل JavaScript سيوقف خيارات الحظر الأخرى وقد يمنع فيسبوك من العمل. هل تريد المتابعة؟")
+                    .setPositiveButton("نعم، عطّله") { _, _ -> prefs.edit().putBoolean("disable_js", true).apply(); notifyUser("أعد تشغيل التطبيق لتفعيل التغيير", Toast.LENGTH_LONG) }
+                    .setNegativeButton("إلغاء") { _, _ -> swJs.isChecked = false }.show()
+            } else {
+                prefs.edit().putBoolean("disable_js", false).apply()
+                notifyUser("أعد تشغيل التطبيق لتفعيل التغيير", Toast.LENGTH_LONG)
+            }
         }
-        box.addView(swJs)
+        privacy.addView(swJs)
+        val changePwd = Button(this).apply { text = "🔑 تغيير رمز PIN" }
+        changePwd.setOnClickListener {
+            val newInput = EditText(this).apply {
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+                hint = "رمز PIN الجديد"
+            }
+            AlertDialog.Builder(this).setTitle("تغيير رمز PIN").setView(newInput)
+                .setPositiveButton("حفظ") { _, _ ->
+                    if (newInput.text.toString().length >= 4) {
+                        prefs.edit().putString("app_password", newInput.text.toString()).apply(); notifyUser("تم التغيير")
+                    } else notifyUser("4 أرقام على الأقل")
+                }.setNegativeButton("إلغاء", null).show()
+        }
+        privacy.addView(changePwd)
 
-        val sepRules = TextView(this); sepRules.text="— قواعد JavaScript / CSS —"; sepRules.setPadding(0,16,0,8); sepRules.setTextColor(Color.GRAY); box.addView(sepRules)
-        val rulesBtn = Button(this); rulesBtn.text="⚙ إدارة قواعد JS / CSS (حفظ / إلغاء / حذف / تفعيل)"; rulesBtn.setOnClickListener { showCustomRulesManager() }; box.addView(rulesBtn)
-        val rulesInfo = TextView(this); rulesInfo.text="يمكنك إنشاء 10 قواعد أو أكثر، لكل قاعدة اسم وتفعيل ونطاق وأولوية وCSS وJavaScript مستقلان. لا توجد قاعدة واحدة تُلغي أو تختلط تلقائيًا مع الأخرى."; rulesInfo.setTextColor(Color.GRAY); rulesInfo.setPadding(0,2,0,10); box.addView(rulesInfo)
+        val rules = section("JavaScript / CSS", "🧩")
+        rules.addView(TextView(this).apply {
+            text = "إدارة القواعد المستقلة — حفظ، تعديل، تفعيل، تعطيل، حذف وأولوية لكل قاعدة."
+            setTextColor(Color.GRAY); textSize = 12f; setPadding(4, 0, 4, 8)
+        })
+        rules.addView(Button(this).apply {
+            text = "⚙ إدارة قواعد JS / CSS"
+            setOnClickListener { showCustomRulesManager() }
+        })
 
-        val sepRedirect = TextView(this); sepRedirect.text="— وجهة الرجوع عند منع تنقّل —"; sepRedirect.setPadding(0,16,0,10); sepRedirect.setTextColor(Color.GRAY); box.addView(sepRedirect)
-        val swRedirectCustom = Switch(this); swRedirectCustom.text="استخدام رابط محدد بدل الرجوع لنفس المكان"; swRedirectCustom.isChecked = prefs.getString("blocked_redirect_mode","back") == "custom"
-        box.addView(swRedirectCustom)
-        val redirectUrlLabel = TextView(this); redirectUrlLabel.text="الرابط المحدد (يُستخدم فقط إذا فعّلت الخيار أعلاه)"; redirectUrlLabel.setPadding(0,8,0,4); box.addView(redirectUrlLabel)
-        val redirectUrlInput = EditText(this); redirectUrlInput.setText(prefs.getString("blocked_redirect_url","")); box.addView(redirectUrlInput)
+        val redirect = section("وجهة الرجوع عند منع التنقل", "↩️")
+        val swRedirectCustom = Switch(this).apply {
+            text = "استخدام رابط محدد بدل الرجوع لنفس المكان"
+            isChecked = prefs.getString("blocked_redirect_mode", "back") == "custom"
+            setPadding(4, 8, 4, 8)
+        }
+        redirect.addView(swRedirectCustom)
+        val redirectUrlInput = EditText(this).apply {
+            hint = "الرابط المحدد"
+            setText(prefs.getString("blocked_redirect_url", ""))
+        }
+        redirect.addView(redirectUrlInput)
 
-        val sepHome = TextView(this); sepHome.text="— الصفحة الرئيسية والصفحات —"; sepHome.setPadding(0,20,0,10); sepHome.setTextColor(Color.GRAY); box.addView(sepHome)
-
-        val homeLabel = TextView(this); homeLabel.text="رابط الصفحة الرئيسية"; homeLabel.setPadding(0,4,0,4); box.addView(homeLabel)
-        val homeInput = EditText(this); homeInput.setText(getHomeUrl()); box.addView(homeInput)
-
-        val pagesLabel = TextView(this); pagesLabel.text="الصفحات الإضافية (اضغط 🏠 مطوّلاً في الشريط للتنقل بينها)"; pagesLabel.setPadding(0,16,0,4); box.addView(pagesLabel)
-        val pagesContainer = LinearLayout(this); pagesContainer.orientation = LinearLayout.VERTICAL; box.addView(pagesContainer)
-
+        val pages = section("الصفحة الرئيسية والصفحات الإضافية", "🏠")
+        val homeInput = EditText(this).apply { hint = "رابط الصفحة الرئيسية"; setText(getHomeUrl()) }
+        pages.addView(homeInput)
+        pages.addView(TextView(this).apply {
+            text = "الصفحات الإضافية — تظهر عند الضغط مطولًا على زر 🏠"
+            setTextColor(Color.GRAY); textSize = 12f; setPadding(4, 8, 4, 4)
+        })
+        val pagesContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        pages.addView(pagesContainer)
         val currentPages = getCustomPages()
-
         fun refreshPagesList() {
             pagesContainer.removeAllViews()
             currentPages.forEachIndexed { index, pair ->
-                val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.setPadding(0,4,0,4)
-                val label = TextView(this); label.text = "${pair.first}\n${pair.second}"; label.textSize = 13f
-                label.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 4, 0, 4) }
+                val label = TextView(this).apply {
+                    text = "${pair.first}\n${pair.second}"
+                    textSize = 13f
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                }
                 row.addView(label)
-                val delBtn = TextView(this); delBtn.text = "✕"; delBtn.setTextColor(Color.RED); delBtn.setPadding(20,0,10,0)
+                val delBtn = Button(this).apply { text = "حذف" }
                 delBtn.setOnClickListener { currentPages.removeAt(index); refreshPagesList() }
                 row.addView(delBtn)
                 pagesContainer.addView(row)
             }
         }
         refreshPagesList()
-
-        val newNameInput = EditText(this); newNameInput.hint = "اسم الصفحة الجديدة"; box.addView(newNameInput)
-        val newUrlInput = EditText(this); newUrlInput.hint = "رابط الصفحة الجديدة (https://...)"; box.addView(newUrlInput)
-        val addPageBtn = TextView(this); addPageBtn.text = "➕ إضافة صفحة جديدة للقائمة"; addPageBtn.setTextColor(Color.BLUE); addPageBtn.setPadding(0,6,0,10)
-        addPageBtn.setOnClickListener {
-            val name = newNameInput.text.toString().trim()
-            var url = newUrlInput.text.toString().trim()
-            if (name.isEmpty() || url.isEmpty()) {
-                notifyUser("يرجى إدخال الاسم والرابط")
-            } else {
-                if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
-                currentPages.add(name to url)
-                newNameInput.setText("")
-                newUrlInput.setText("")
-                refreshPagesList()
+        val newNameInput = EditText(this).apply { hint = "اسم الصفحة الجديدة" }
+        val newUrlInput = EditText(this).apply { hint = "رابط الصفحة الجديدة (https://...)" }
+        pages.addView(newNameInput); pages.addView(newUrlInput)
+        pages.addView(Button(this).apply {
+            text = "➕ إضافة صفحة جديدة"
+            setOnClickListener {
+                val name = newNameInput.text.toString().trim()
+                var url = newUrlInput.text.toString().trim()
+                if (name.isEmpty() || url.isEmpty()) notifyUser("يرجى إدخال الاسم والرابط")
+                else {
+                    if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
+                    currentPages.add(name to url); newNameInput.setText(""); newUrlInput.setText(""); refreshPagesList()
+                }
             }
-        }
-        box.addView(addPageBtn)
+        })
 
-        val changePwd = TextView(this); changePwd.text="تغيير رمز PIN"; changePwd.setTextColor(Color.BLUE); changePwd.setPadding(0,20,0,0)
-        changePwd.setOnClickListener {
-            val newInput = EditText(this)
-            newInput.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            newInput.hint = "رمز PIN الجديد"
-            AlertDialog.Builder(this).setTitle("تغيير رمز PIN").setView(newInput)
-                .setPositiveButton("حفظ"){_,_-> if(newInput.text.toString().length>=4) { prefs.edit().putString("app_password", newInput.text.toString()).apply(); notifyUser("تم التغيير") } else notifyUser("4 أرقام على الأقل") }
-                .setNegativeButton("إلغاء",null).show()
-        }
-        box.addView(changePwd)
-
-        AlertDialog.Builder(this).setView(ScrollView(this).apply{addView(box)}).setPositiveButton("حفظ"){_,_->
-            var homeUrl = homeInput.text.toString().trim()
-            if (homeUrl.isEmpty()) homeUrl = "https://www.facebook.com/"
-            if (!homeUrl.startsWith("http://") && !homeUrl.startsWith("https://")) homeUrl = "https://$homeUrl"
-            prefs.edit()
-                .putString("group_whitelist", whitelistInput.text.toString())
-                .putString("custom_block_domains", blockDomainsInput.text.toString())
-                .putString("custom_block_exceptions", exceptionsInput.text.toString())
-                .putString("keyword_blocklist", keywordsInput.text.toString())
-                .putString("button_block_words", btnWordsInput.text.toString())
-                .putInt("daily_limit_minutes", limitInput.text.toString().toIntOrNull() ?: 0)
-                .putInt("schedule_start_hour", (startInput.text.toString().toIntOrNull() ?: 0).coerceIn(0,23))
-                .putInt("schedule_end_hour", (endInput.text.toString().toIntOrNull() ?: 24).coerceIn(0,24))
-                .putString("home_url", homeUrl)
-                .putString("blocked_redirect_mode", if (swRedirectCustom.isChecked) "custom" else "back")
-                .putString("blocked_redirect_url", redirectUrlInput.text.toString().trim())
-                .apply()
-            saveCustomPages(currentPages)
-            applyCustom()
-            // Rules just changed — re-check the page already open instead of waiting for
-            // the next tap or reload to discover it's no longer allowed.
-            val current = web.url ?: ""
-            if (!isAuth(current)) {
-                if (isPageLocked(current)) web.loadUrl(prefs.getString("lock_page_url", "") ?: getHomeUrl())
-                else if (handleNavigation(current)) web.loadUrl(getHomeUrl())
+        AlertDialog.Builder(this)
+            .setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("حفظ") { _, _ ->
+                var homeUrl = homeInput.text.toString().trim()
+                if (homeUrl.isEmpty()) homeUrl = "https://www.facebook.com/"
+                if (!homeUrl.startsWith("http://") && !homeUrl.startsWith("https://")) homeUrl = "https://$homeUrl"
+                prefs.edit()
+                    .putString("group_whitelist", whitelistInput.text.toString())
+                    .putString("custom_block_domains", blockDomainsInput.text.toString())
+                    .putString("custom_block_exceptions", exceptionsInput.text.toString())
+                    .putString("keyword_blocklist", keywordsInput.text.toString())
+                    .putString("button_block_words", btnWordsInput.text.toString())
+                    .putInt("daily_limit_minutes", limitInput.text.toString().toIntOrNull() ?: 0)
+                    .putInt("schedule_start_hour", (startInput.text.toString().toIntOrNull() ?: 0).coerceIn(0, 23))
+                    .putInt("schedule_end_hour", (endInput.text.toString().toIntOrNull() ?: 24).coerceIn(0, 24))
+                    .putString("home_url", homeUrl)
+                    .putString("blocked_redirect_mode", if (swRedirectCustom.isChecked) "custom" else "back")
+                    .putString("blocked_redirect_url", redirectUrlInput.text.toString().trim())
+                    .apply()
+                saveCustomPages(currentPages)
+                applyCustom()
+                val current = web.url ?: ""
+                if (!isAuth(current)) {
+                    if (isPageLocked(current)) web.loadUrl(prefs.getString("lock_page_url", "") ?: getHomeUrl())
+                    else if (handleNavigation(current)) web.loadUrl(getHomeUrl())
+                }
             }
-        }.setNegativeButton("إغلاق",null).show()
+            .setNegativeButton("إغلاق", null)
+            .show()
     }
 
     // "image" or "video" if this URL looks like Facebook's own photo/video viewer, else null.
@@ -1461,6 +1497,43 @@ class MainActivity : Activity() {
         val diagnose = Button(this).apply { text = "🔎 فحص القواعد الحالية + نسخ الأخطاء" }
 diagnose.setOnClickListener { applyCustomRules(); web.postDelayed({ showRuleEngineReport() }, 500) }
 container.addView(diagnose)
+val likePreset = Button(this).apply { text = "👍 إضافة قاعدة اختبار: إخفاء زر إعجاب" }
+likePreset.setOnClickListener {
+    val a = customRulesJson()
+    val o = JSONObject()
+    o.put("id", UUID.randomUUID().toString())
+    o.put("name", "اختبار - إخفاء زر إعجاب")
+    o.put("enabled", true)
+    o.put("scope", "all")
+    o.put("url", "")
+    o.put("priority", 10)
+    o.put("css", "[aria-label=\"Like\" i],[aria-label*=\"Like\" i],[aria-label*=\"إعجاب\" i],[aria-label*=\"أعجبني\" i]{display:none!important;visibility:hidden!important;pointer-events:none!important;}")
+    o.put("js", """(function(){
+function hideLike(){
+ document.querySelectorAll('button,a,div[role=\"button\"],span[role=\"button\"]').forEach(function(el){
+  var text=(el.innerText||el.textContent||'').trim();
+  var aria=el.getAttribute('aria-label')||'';
+  var title=el.getAttribute('title')||'';
+  if(/^like$/i.test(text)||/^like$/i.test(aria)||/إعجاب|أعجبني/i.test(text)||/إعجاب|أعجبني/i.test(aria)||/^react$/i.test(aria)||/like/i.test(title)){
+   el.style.setProperty('display','none','important');
+   el.style.setProperty('visibility','hidden','important');
+   el.style.setProperty('pointer-events','none','important');
+  }
+ });
+}
+hideLike();
+if(!window.__slimLikeTestObserver){
+ window.__slimLikeTestObserver=new MutationObserver(hideLike);
+ window.__slimLikeTestObserver.observe(document.documentElement,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['aria-label','title']});
+}
+})();""")
+    a.put(o)
+    saveCustomRulesJson(a)
+    notifyUser("تمت إضافة قاعدة اختبار إخفاء الإعجاب")
+    applyCustomRulesDelayed()
+    refresh()
+}
+container.addView(likePreset)
 val info = TextView(this).apply {
             text = "كل قاعدة مستقلة عن الأخرى. يمكنك إنشاء 10 قواعد أو أكثر. التفعيل والإيقاف والحذف لا يغيّر القواعد الأخرى. عند الخطأ في قاعدة واحدة تستمر بقية القواعد."
             setTextColor(Color.GRAY)

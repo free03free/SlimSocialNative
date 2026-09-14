@@ -1459,7 +1459,7 @@ class MainActivity : Activity() {
             setPadding(24, 8, 24, 8)
         }
         val diagnose = Button(this).apply { text = "🔎 فحص القواعد الحالية + نسخ الأخطاء" }
-diagnose.setOnClickListener { applyCustomRules(); postDelayed({ showRuleEngineReport() }, 500) }
+diagnose.setOnClickListener { applyCustomRules(); web.postDelayed({ showRuleEngineReport() }, 500) }
 container.addView(diagnose)
 val info = TextView(this).apply {
             text = "كل قاعدة مستقلة عن الأخرى. يمكنك إنشاء 10 قواعد أو أكثر. التفعيل والإيقاف والحذف لا يغيّر القواعد الأخرى. عند الخطأ في قاعدة واحدة تستمر بقية القواعد."

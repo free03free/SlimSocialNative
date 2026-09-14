@@ -1635,8 +1635,6 @@ val info = TextView(this).apply {
         val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         container.addView(listBox)
 
-        var refresh: () -> Unit = {}
-
         fun editRule(existing: JSONObject?, onDone: () -> Unit) {
             val id = existing?.optString("id", UUID.randomUUID().toString()) ?: UUID.randomUUID().toString()
             val name = EditText(this).apply { hint = "اسم القاعدة"; setText(existing?.optString("name", "") ?: "") }

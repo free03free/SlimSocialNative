@@ -191,7 +191,7 @@ class MainActivity : Activity() {
                 }
             }
             override fun onPageFinished(v: WebView, url: String) {
-                if (!isAuth(url)) { applyControls(); applyCustom() }
+                if (!isAuth(url)) { applyControls(); applyCustomRulesDelayed() }
                 val restricted = restrictedCustomPageUrl
                 if (restricted != null && normalizeUrl(url) != restricted) {
                     v.stopLoading()
@@ -821,8 +821,8 @@ class MainActivity : Activity() {
             // lazy-load thumbnails. Do not depend on naturalWidth/naturalHeight and do
             // not assume a specific Facebook class name. Find the nearest common photo
             // container, then force its layout and every photo wrapper into one column.
-            js.append("""if(!window.__slimVerticalPhotos){window.__slimVerticalPhotos=true;function __slimImg(i){if(!i)return false;var r=i.getBoundingClientRect();var src=i.currentSrc||i.src||i.getAttribute('src')||'';return r.width>=40&&r.height>=30&&src.length>15&&!/^data:/i.test(src);}function __slimPhotoPass(){var imgs=Array.from(document.querySelectorAll('img')).filter(__slimImg);var groups=[];var used=[];function addGroup(g,ps){if(!g||ps.length<2||ps.length>20)return;if(used.indexOf(g)!==-1)return;used.push(g);groups.push({g:g,ps:ps});}for(var ii=0;ii<imgs.length;ii++){var img=imgs[ii],g=null,ps=null;var art=img.closest('article,[role=\"article\"],[data-pagelet*=\"FeedUnit\" i]');if(art){var ap=Array.from(art.querySelectorAll('img')).filter(__slimImg);if(ap.length>=2&&ap.length<=20){g=art;ps=ap;}}if(!g){var n=img.parentElement;for(var d=0;n&&d<40;d++,n=n.parentElement){var q=Array.from(n.querySelectorAll('img')).filter(__slimImg);if(q.length>=2&&q.length<=20){g=n;ps=q;break;}}}addGroup(g,ps);}groups.forEach(function(item){var g=item.g,ps=item.ps;g.classList.add('slim-vertical-photo-group');g.style.setProperty('display','block','important');g.style.setProperty('width','100%','important');g.style.setProperty('max-width','100%','important');g.style.setProperty('height','auto','important');g.style.setProperty('grid-template-columns','none','important');g.style.setProperty('grid-template-rows','none','important');g.style.setProperty('flex-direction','column','important');g.style.setProperty('flex-wrap','nowrap','important');g.style.setProperty('overflow','visible','important');for(var k=0;k<ps.length;k++){var x=ps[k],n=x;for(var j=0;j<25&&n&&n!==g;j++){n.style.setProperty('display','block','important');n.style.setProperty('width','100%','important');n.style.setProperty('max-width','100%','important');n.style.setProperty('height','auto','important');n.style.setProperty('min-height','0','important');n.style.setProperty('float','none','important');n.style.setProperty('clear','both','important');n.style.setProperty('grid-column','auto','important');n.style.setProperty('grid-row','auto','important');n.style.setProperty('flex','0 0 auto','important');n.style.setProperty('flex-direction','column','important');n.style.setProperty('overflow','visible','important');if(n.parentElement===g)n.style.setProperty('margin',k<ps.length-1?'0 0 8px 0':'0','important');n=n.parentElement;}x.classList.add('slim-vertical-photo');x.style.setProperty('display','block','important');x.style.setProperty('width','100%','important');x.style.setProperty('max-width','100%','important');x.style.setProperty('height','auto','important');x.style.setProperty('min-height','0','important');x.style.setProperty('object-fit','contain','important');x.style.setProperty('object-position','center center','important');try{x.removeAttribute('loading');}catch(e){}}});}__slimPhotoPass();if(!window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver=new MutationObserver(function(){clearTimeout(window.__slimVerticalPhotoTimer);window.__slimVerticalPhotoTimer=setTimeout(__slimPhotoPass,200);});window.__slimVerticalPhotoObserver.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class','src','srcset']});}window.addEventListener('load',__slimPhotoPass);window.addEventListener('resize',__slimPhotoPass);window.__slimPhotoTimer=setInterval(__slimPhotoPass,1200);}""")
-            js.append("s+='html,body{max-width:100%!important;overflow-x:hidden!important;} .slim-vertical-photo-group{display:flex!important;flex-direction:column!important;flex-wrap:nowrap!important;grid-template-columns:1fr!important;grid-template-rows:none!important;align-items:stretch!important;justify-content:flex-start!important;background:transparent!important;border:0!important;box-shadow:none!important;overflow:visible!important;} .slim-vertical-photo-group img.slim-vertical-photo{display:block!important;flex:0 0 auto!important;grid-column:1 / -1!important;grid-row:auto!important;float:none!important;clear:both!important;visibility:visible!important;opacity:1!important;width:100%!important;max-width:100%!important;height:auto!important;min-height:0!important;object-fit:contain!important;background:transparent!important;border:0!important;box-shadow:none!important;}';")
+            js.append("""if(!window.__slimVerticalPhotos){window.__slimVerticalPhotos=true;function __slimMedia(el){if(!el)return false;var r=el.getBoundingClientRect(),cs=getComputedStyle(el),bg=cs.backgroundImage||'';if(r.width<60||r.height<40)return false;if(el.tagName==='IMG')return !!((el.currentSrc||el.src||'').length>10);if(el.tagName==='VIDEO')return true;return bg.indexOf('url(')>=0;}function __slimMediaNodes(root){return Array.from(root.querySelectorAll('img,video,[style*="background-image" i]')).filter(__slimMedia);}function __slimForce(el,first){if(!el)return;el.style.setProperty('display','block','important');el.style.setProperty('width','100%','important');el.style.setProperty('max-width','100%','important');el.style.setProperty('height','auto','important');el.style.setProperty('min-height','0','important');el.style.setProperty('min-width','0','important');el.style.setProperty('float','none','important');el.style.setProperty('clear','both','important');el.style.setProperty('grid-column','1 / -1','important');el.style.setProperty('grid-row','auto','important');el.style.setProperty('flex','0 0 auto','important');el.style.setProperty('flex-basis','auto','important');el.style.setProperty('position','static','important');el.style.setProperty('transform','none','important');el.style.setProperty('inset','auto','important');el.style.setProperty('margin',first?'0':'0 0 8px 0','important');}function __slimPhotoPass(){var all=Array.from(document.querySelectorAll('img,video,[style*="background-image" i]')).filter(__slimMedia);var done=[];all.forEach(function(m){var g=null,n=m.parentElement;for(var d=0;n&&d<35;d++,n=n.parentElement){var q=__slimMediaNodes(n);if(q.length>=2&&q.length<=30){g=n;break;}}if(!g||done.indexOf(g)>=0)return;var media=__slimMediaNodes(g);if(media.length<2||media.length>30)return;done.push(g);g.classList.add('slim-vertical-photo-group');g.style.setProperty('display','block','important');g.style.setProperty('width','100%','important');g.style.setProperty('max-width','100%','important');g.style.setProperty('height','auto','important');g.style.setProperty('overflow','visible','important');g.style.setProperty('position','static','important');g.style.setProperty('grid-template-columns','none','important');g.style.setProperty('grid-template-rows','none','important');g.style.setProperty('flex-direction','column','important');g.style.setProperty('flex-wrap','nowrap','important');media.forEach(function(x,i){var chain=[],a=x;for(var z=0;a&&a!==g&&z<35;z++,a=a.parentElement)chain.push(a);chain.forEach(function(c){__slimForce(c,c.parentElement===g);});if(x.tagName==='IMG'){x.style.setProperty('object-fit','contain','important');x.style.setProperty('object-position','center center','important');x.style.setProperty('visibility','visible','important');x.style.setProperty('opacity','1','important');}if(x.tagName==='VIDEO'){x.style.setProperty('object-fit','contain','important');}x.classList.add('slim-vertical-photo');});});}__slimPhotoPass();if(!window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver=new MutationObserver(function(){clearTimeout(window.__slimVerticalPhotoTimer);window.__slimVerticalPhotoTimer=setTimeout(__slimPhotoPass,150);});window.__slimVerticalPhotoObserver.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class','src','srcset']});}window.addEventListener('load',__slimPhotoPass);window.addEventListener('resize',__slimPhotoPass);window.__slimPhotoTimer=setInterval(__slimPhotoPass,800);}""")
+            js.append("s+='html,body{max-width:100%!important;overflow-x:hidden!important;} .slim-vertical-photo-group{display:block!important;width:100%!important;max-width:100%!important;height:auto!important;background:transparent!important;border:0!important;box-shadow:none!important;overflow:visible!important;position:static!important;} .slim-vertical-photo-group *{box-sizing:border-box!important;} .slim-vertical-photo-group img.slim-vertical-photo,.slim-vertical-photo-group video.slim-vertical-photo{display:block!important;float:none!important;clear:both!important;position:static!important;transform:none!important;inset:auto!important;width:100%!important;max-width:100%!important;height:auto!important;min-height:0!important;object-fit:contain!important;background:transparent!important;border:0!important;box-shadow:none!important;visibility:visible!important;opacity:1!important;}';")
         } else {
             // Remove any previous mode injected into the current SPA document when the
             // user switches the setting OFF.
@@ -1101,8 +1101,9 @@ class MainActivity : Activity() {
         }
         box.addView(swJs)
 
-        val custom=EditText(this); custom.hint="CSS مخصص (اختياري)"; custom.setText(prefs.getString("css","")); box.addView(custom)
-        val jsBox=EditText(this); jsBox.hint="JavaScript مخصص (اختياري)"; jsBox.setText(prefs.getString("js","")); box.addView(jsBox)
+        val sepRules = TextView(this); sepRules.text="— قواعد JavaScript / CSS —"; sepRules.setPadding(0,16,0,8); sepRules.setTextColor(Color.GRAY); box.addView(sepRules)
+        val rulesBtn = Button(this); rulesBtn.text="⚙ إدارة قواعد JS / CSS (حفظ / إلغاء / حذف / تفعيل)"; rulesBtn.setOnClickListener { showCustomRulesManager() }; box.addView(rulesBtn)
+        val rulesInfo = TextView(this); rulesInfo.text="يمكنك إنشاء 10 قواعد أو أكثر، لكل قاعدة اسم وتفعيل ونطاق وأولوية وCSS وJavaScript مستقلان. لا توجد قاعدة واحدة تُلغي أو تختلط تلقائيًا مع الأخرى."; rulesInfo.setTextColor(Color.GRAY); rulesInfo.setPadding(0,2,0,10); box.addView(rulesInfo)
 
         val sepRedirect = TextView(this); sepRedirect.text="— وجهة الرجوع عند منع تنقّل —"; sepRedirect.setPadding(0,16,0,10); sepRedirect.setTextColor(Color.GRAY); box.addView(sepRedirect)
         val swRedirectCustom = Switch(this); swRedirectCustom.text="استخدام رابط محدد بدل الرجوع لنفس المكان"; swRedirectCustom.isChecked = prefs.getString("blocked_redirect_mode","back") == "custom"
@@ -1169,8 +1170,6 @@ class MainActivity : Activity() {
             if (homeUrl.isEmpty()) homeUrl = "https://www.facebook.com/"
             if (!homeUrl.startsWith("http://") && !homeUrl.startsWith("https://")) homeUrl = "https://$homeUrl"
             prefs.edit()
-                .putString("css",custom.text.toString())
-                .putString("js",jsBox.text.toString())
                 .putString("group_whitelist", whitelistInput.text.toString())
                 .putString("custom_block_domains", blockDomainsInput.text.toString())
                 .putString("custom_block_exceptions", exceptionsInput.text.toString())
@@ -1330,10 +1329,216 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
+    // ---------------- Custom JS/CSS rule engine ----------------
+    // Each rule is independent and identified by a stable UUID. Rules are stored as JSON,
+    // so adding/deleting/reordering one rule never changes the meaning of another rule.
+    private fun customRulesJson(): org.json.JSONArray {
+        val raw = prefs.getString("custom_rules_json", "[]") ?: "[]"
+        return try { org.json.JSONArray(raw) } catch (_: Exception) { org.json.JSONArray() }
+    }
+
+    private fun saveCustomRulesJson(arr: org.json.JSONArray) {
+        prefs.edit().putString("custom_rules_json", arr.toString()).apply()
+    }
+
+    private fun migrateLegacyCustomRuleIfNeeded() {
+        val css = prefs.getString("css", "") ?: ""
+        val js = prefs.getString("js", "") ?: ""
+        if (css.isBlank() && js.isBlank()) return
+        if (prefs.getBoolean("custom_rules_migrated", false)) return
+        val arr = customRulesJson()
+        val obj = JSONObject()
+        obj.put("id", UUID.randomUUID().toString())
+        obj.put("name", "القواعد القديمة")
+        obj.put("enabled", true)
+        obj.put("scope", "all")
+        obj.put("url", "")
+        obj.put("priority", 0)
+        obj.put("css", css)
+        obj.put("js", js)
+        arr.put(obj)
+        saveCustomRulesJson(arr)
+        prefs.edit().putBoolean("custom_rules_migrated", true).apply()
+    }
+
+    private fun customRuleMatches(obj: JSONObject, url: String): Boolean {
+        if (!obj.optBoolean("enabled", true)) return false
+        if (isAuth(url) || url.isBlank()) return false
+        return when (obj.optString("scope", "all")) {
+            "url" -> {
+                val ruleUrl = obj.optString("url", "").trim()
+                ruleUrl.isNotEmpty() && matchesConfiguredUrlRule(url, ruleUrl)
+            }
+            "exceptions" -> {
+                prefs.getBoolean("custom_block_enabled", false) &&
+                    getListPref("custom_block_exceptions").any { matchesConfiguredUrlRule(url, it) }
+            }
+            else -> true
+        }
+    }
+
+    private fun applyCustomRules() {
+        if (isAuth(web.url ?: "") || !web.settings.javaScriptEnabled) return
+        migrateLegacyCustomRuleIfNeeded()
+        val currentUrl = web.url ?: return
+        val arr = customRulesJson()
+        val rules = mutableListOf<JSONObject>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (customRuleMatches(o, currentUrl)) rules.add(o)
+        }
+        rules.sortWith(compareBy<JSONObject> { it.optInt("priority", 0) }.thenBy { it.optString("id", "") })
+
+        val parts = StringBuilder("(function(){try{")
+        parts.append("window.__SlimRules=window.__SlimRules||{};")
+        // Remove only styles created by this rule engine. Built-in controls and Facebook CSS
+        // remain untouched.
+        parts.append("document.querySelectorAll('style[data-slim-custom-rule]').forEach(function(e){e.remove();});")
+        parts.append("Object.keys(window.__SlimRules).forEach(function(k){try{var c=window.__SlimRules[k];if(c&&typeof c.cleanup==='function')c.cleanup();}catch(e){}});window.__SlimRules={};")
+
+        for (rule in rules) {
+            val id = rule.optString("id", UUID.randomUUID().toString())
+            val css = rule.optString("css", "")
+            val js = rule.optString("js", "")
+            val qid = JSONObject.quote(id)
+            if (css.isNotBlank()) {
+                parts.append("(function(){var s=document.createElement('style');s.setAttribute('data-slim-custom-rule',")
+                    .append(qid).append(");s.textContent=")
+                    .append(JSONObject.quote(css)).append(";document.head.appendChild(s);})();")
+            }
+            if (js.isNotBlank()) {
+                // One try/catch per rule: a broken rule cannot stop the remaining rules.
+                // The context object gives advanced rules an optional cleanup hook without
+                // changing the normal document/window APIs used by ordinary JavaScript.
+                parts.append("(function(){var id=").append(qid).append(";var ctx={cleanup:null};window.__SlimRules[id]=ctx;try{(function(){")
+                    .append(js).append("}).call(window);}catch(e){}})();")
+            }
+        }
+        parts.append("}catch(e){}})();")
+        web.evaluateJavascript(parts.toString(), null)
+    }
+
+    private fun applyCustomRulesDelayed() {
+        if (!web.settings.javaScriptEnabled || isAuth(web.url ?: "")) return
+        web.postDelayed({ applyCustomRules() }, 250)
+        web.postDelayed({ applyCustomRules() }, 1000)
+    }
+
+    private fun scopeLabel(scope: String): String = when (scope) {
+        "url" -> "رابط محدد"
+        "exceptions" -> "روابط الاستثناءات"
+        else -> "كل صفحات فيسبوك"
+    }
+
+    private fun showCustomRulesManager() {
+        migrateLegacyCustomRuleIfNeeded()
+        val list = mutableListOf<JSONObject>()
+        val arr = customRulesJson()
+        for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { list.add(it) }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 8, 24, 8)
+        }
+        val info = TextView(this).apply {
+            text = "كل قاعدة مستقلة عن الأخرى. يمكنك إنشاء 10 قواعد أو أكثر. التفعيل والإيقاف والحذف لا يغيّر القواعد الأخرى. عند الخطأ في قاعدة واحدة تستمر بقية القواعد."
+            setTextColor(Color.GRAY)
+            setPadding(0, 0, 0, 12)
+        }
+        container.addView(info)
+        val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        container.addView(listBox)
+
+        fun editRule(existing: JSONObject?, onDone: () -> Unit) {
+            val id = existing?.optString("id", UUID.randomUUID().toString()) ?: UUID.randomUUID().toString()
+            val name = EditText(this).apply { hint = "اسم القاعدة"; setText(existing?.optString("name", "") ?: "") }
+            val enabled = Switch(this).apply { text = "تفعيل القاعدة"; isChecked = existing?.optBoolean("enabled", true) ?: true }
+            val scopeSpinner = Spinner(this)
+            val scopes = arrayOf("كل صفحات فيسبوك", "رابط محدد", "روابط الاستثناءات")
+            scopeSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, scopes)
+            val currentScope = existing?.optString("scope", "all") ?: "all"
+            scopeSpinner.setSelection(if (currentScope == "url") 1 else if (currentScope == "exceptions") 2 else 0)
+            val urlInput = EditText(this).apply { hint = "الرابط (إذا اخترت رابط محدد)"; setText(existing?.optString("url", "") ?: "") }
+            val priority = EditText(this).apply { hint = "الأولوية (رقم أكبر = يطبق لاحقًا)"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED; setText((existing?.optInt("priority", 0) ?: 0).toString()) }
+            val css = EditText(this).apply { hint = "CSS"; setText(existing?.optString("css", "") ?: ""); minLines = 5; gravity = Gravity.TOP; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE }
+            val js = EditText(this).apply { hint = "JavaScript"; setText(existing?.optString("js", "") ?: ""); minLines = 7; gravity = Gravity.TOP; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE }
+            val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(12, 0, 12, 0) }
+            form.addView(name); form.addView(enabled); form.addView(scopeSpinner); form.addView(urlInput); form.addView(priority)
+            val cssLabel = TextView(this).apply { text = "CSS"; setPadding(0, 10, 0, 2) }
+            val jsLabel = TextView(this).apply { text = "JavaScript"; setPadding(0, 10, 0, 2) }
+            form.addView(cssLabel); form.addView(css); form.addView(jsLabel); form.addView(js)
+            val scroll = ScrollView(this).apply { addView(form) }
+
+            val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "إضافة قاعدة JS/CSS" else "تعديل قاعدة JS/CSS")
+                .setView(scroll)
+                .setNegativeButton("إلغاء", null)
+                .setPositiveButton("حفظ", null)
+            if (existing != null) dialog.setNeutralButton("حذف", null)
+            val d = dialog.create()
+            d.setOnShowListener {
+                d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    val ruleName = name.text.toString().trim()
+                    val selectedScope = when (scopeSpinner.selectedItemPosition) { 1 -> "url"; 2 -> "exceptions"; else -> "all" }
+                    val targetUrl = urlInput.text.toString().trim()
+                    if (ruleName.isEmpty()) { notifyUser("اكتب اسمًا للقاعدة"); return@setOnClickListener }
+                    if (selectedScope == "url" && targetUrl.isEmpty()) { notifyUser("اكتب الرابط المحدد"); return@setOnClickListener }
+                    val o = JSONObject()
+                    o.put("id", id); o.put("name", ruleName); o.put("enabled", enabled.isChecked)
+                    o.put("scope", selectedScope); o.put("url", targetUrl)
+                    o.put("priority", priority.text.toString().toIntOrNull() ?: 0)
+                    o.put("css", css.text.toString()); o.put("js", js.text.toString())
+                    val a = customRulesJson()
+                    var replaced = false
+                    for (i in 0 until a.length()) {
+                        val old = a.optJSONObject(i)
+                        if (old?.optString("id") == id) { a.put(i, o); replaced = true; break }
+                    }
+                    if (!replaced) a.put(o)
+                    saveCustomRulesJson(a)
+                    prefs.edit().putBoolean("custom_rules_migrated", true).apply()
+                    d.dismiss(); onDone(); applyCustomRulesDelayed()
+                }
+                if (existing != null) {
+                    d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                        val a = customRulesJson(); val out = org.json.JSONArray()
+                        for (i in 0 until a.length()) { val o = a.optJSONObject(i); if (o != null && o.optString("id") != id) out.put(o) }
+                        saveCustomRulesJson(out); d.dismiss(); onDone(); applyCustomRulesDelayed()
+                    }
+                }
+            }
+            d.show()
+        }
+
+        fun refresh() {
+            listBox.removeAllViews()
+            val a = customRulesJson()
+            if (a.length() == 0) {
+                listBox.addView(TextView(this).apply { text = "لا توجد قواعد بعد. اضغط + لإضافة أول قاعدة."; setPadding(0, 12, 0, 12) })
+                return
+            }
+            for (i in 0 until a.length()) {
+                val o = a.optJSONObject(i) ?: continue
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 6, 0, 6) }
+                val text = TextView(this).apply {
+                    text = "${if (o.optBoolean("enabled", true)) "✓" else "○"} ${o.optString("name", "بدون اسم")}\n${scopeLabel(o.optString("scope", "all"))} • أولوية ${o.optInt("priority", 0)}"
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                }
+                val edit = Button(this).apply { text = "تعديل" }
+                edit.setOnClickListener { editRule(o) { refresh() } }
+                row.addView(text); row.addView(edit); listBox.addView(row)
+            }
+        }
+        refresh()
+        val add = Button(this).apply { text = "＋ إضافة قاعدة جديدة" }
+        add.setOnClickListener { editRule(null) { refresh() } }
+        container.addView(add)
+        AlertDialog.Builder(this).setTitle("إدارة قواعد JS / CSS").setView(ScrollView(this).apply { addView(container) })
+            .setNegativeButton("إغلاق", null).show()
+    }
+
     private fun applyCustom(){
-        if(isAuth(web.url ?: "") || !web.settings.javaScriptEnabled) return
-        val css=prefs.getString("css","")!!; val js=prefs.getString("js","")!!
-        web.evaluateJavascript("(function(){var s=document.createElement('style');s.textContent=${JSONObject.quote(css)};document.head.appendChild(s);try{${js}}catch(e){}})();",null)
+        if (isAuth(web.url ?: "") || !web.settings.javaScriptEnabled) return
+        applyCustomRules()
         applyControls()
     }
 

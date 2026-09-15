@@ -120,6 +120,24 @@ class MainActivity : Activity() {
             }
             @android.webkit.JavascriptInterface
             fun keywordRedirect() { runOnUiThread { redirectHomeForKeyword() } }
+            // Synchronous, read-only prediction used to swallow a tap BEFORE Facebook's
+            // own SPA router acts on it — see predictBlocked(). checkNav() (above) stays
+            // the single source of truth for the actual decision + UI side effects; this
+            // never mutates state, it only tells the click guard whether to preventDefault.
+            @android.webkit.JavascriptInterface
+            fun wouldBlockNav(url: String): Boolean {
+                return try { predictBlocked(url) } catch (_: Exception) { false }
+            }
+            @android.webkit.JavascriptInterface
+            fun reportPreemptiveBlock() {
+                // The tap was already cancelled client-side (preventDefault), so unlike
+                // checkNav()/enforceLeave() there is no navigation to undo — no goBack(),
+                // no loadUrl(). Just record it and let the person know, in place.
+                runOnUiThread {
+                    incrementBlockedCount()
+                    notifyUser("تم منع هذا الرابط")
+                }
+            }
         }, "SlimBridge")
         // Never allow window.open()/target=_blank/JS popups to spawn a second WebView —
         // every link must flow through this WebView's own shouldOverrideUrlLoading, or it
@@ -477,6 +495,52 @@ class MainActivity : Activity() {
         if (!prefs.getBoolean("custom_block_allow_images", false) &&
             !prefs.getBoolean("custom_block_allow_videos", false)) return false
         return getListPref("custom_block_exceptions").any { matchesConfiguredUrlRule(url, it) }
+    }
+
+    // Read-only mirror of handleNavigation()'s "block" conditions. Used ONLY by the
+    // preemptive click guard (see applyControls()) to decide, before a single frame of
+    // Facebook's SPA re-render happens, whether a tap should be swallowed. It never
+    // toasts, never touches blockedNavigationUrl/generation, and never sets
+    // pendingMediaOnlyExceptionUrl — handleNavigation() remains the single place that
+    // decision is actually enacted, so keep the two in sync when either changes.
+    private fun predictBlocked(url: String): Boolean {
+        val u = normalizeUrl(url)
+        if (u.isEmpty()) return true
+        if (u == blockedNavigationUrl) return true
+        val restricted = restrictedCustomPageUrl
+        if (restricted != null && u != restricted) return true
+        val isFacebookDomain = isFacebookHost(url)
+
+        if (prefs.getBoolean("custom_block_enabled", false)) {
+            val exceptions = getListPref("custom_block_exceptions")
+            val isException = exceptions.any { matchesConfiguredUrlRule(url, it) }
+            val fullExceptions = prefs.getBoolean("custom_block_full_exceptions", false)
+            val mediaOnlyException = isException && !fullExceptions &&
+                (prefs.getBoolean("custom_block_allow_images", false) ||
+                 prefs.getBoolean("custom_block_allow_videos", false))
+            if (isException && !fullExceptions) {
+                // A media-only exception opens exclusively through the validated
+                // openMedia()/openRestrictedImage() bridge, never as a plain click-through.
+                return !mediaOnlyException
+            }
+            val blocklist = getListPref("custom_block_domains")
+            if (blocklist.any { it.isNotEmpty() && matchesConfiguredUrlRule(url, it) }) return true
+        }
+
+        if (prefs.getBoolean("block_external", false) && !isFacebookDomain) return true
+
+        if (prefs.getBoolean("block_profile_nav", false) &&
+            isFacebookDomain && !isAuth(url) && isProfilePageOrGroupUrl(url)) {
+            val id = extractIdentifier(url.lowercase())
+            if (id == null || !getWhitelistSet().contains(id)) return true
+        }
+
+        if (prefs.getBoolean("block_unjoined_groups", false)) {
+            val groupId = extractGroupId(url.lowercase())
+            if (groupId != null && !getWhitelistSet().contains(groupId)) return true
+        }
+
+        return false
     }
 
     private fun handleNavigation(url: String): Boolean {
@@ -902,6 +966,17 @@ class MainActivity : Activity() {
             js.append("if(!window.__slimSpaGuard){window.__slimSpaGuard=true;window.__slimLastUrl=location.href;var _ps=history.pushState;history.pushState=function(s,t,u){var h='';try{h=new URL(u,location.href).href;}catch(e){h=location.href;}if(window.SlimBridge)SlimBridge.checkNav(h);return;};var _rs=history.replaceState;history.replaceState=function(s,t,u){var h='';try{h=new URL(u,location.href).href;}catch(e){h=location.href;}if(window.SlimBridge)SlimBridge.checkNav(h);return;};window.addEventListener('popstate',function(){if(location.href!==window.__slimLastUrl&&window.SlimBridge)SlimBridge.checkNav(location.href);});setInterval(function(){if(location.href!==window.__slimLastUrl&&window.SlimBridge)SlimBridge.checkNav(location.href);},250);}")
         } else {
             js.append("if(!window.__slimSpaGuard){window.__slimSpaGuard=true;window.__slimLastUrl=location.href;function slimCheckSpa(){if(location.href!==window.__slimLastUrl){window.__slimLastUrl=location.href;if(window.SlimBridge)SlimBridge.checkNav(location.href);}}var _ps=history.pushState;history.pushState=function(){_ps.apply(history,arguments);slimCheckSpa();};var _rs=history.replaceState;history.replaceState=function(){_rs.apply(history,arguments);slimCheckSpa();};window.addEventListener('popstate',slimCheckSpa);setInterval(slimCheckSpa,600);}")
+            // PREEMPTIVE CLICK GUARD (general blocking). The pushState/popstate/interval
+            // hooks above are reactive: Facebook's router can render a group/page's
+            // content on its own client-side state change before (or without ever)
+            // calling history.pushState, so waiting on the URL to change let blocked
+            // pages/groups render, sometimes with no bounce-back at all. This mirrors
+            // the restricted-sandbox guard below: on every capturing-phase tap, resolve
+            // the nearest real <a href> ancestor and ask the native side — synchronously,
+            // via wouldBlockNav() — whether that destination will be blocked. If so,
+            // swallow the tap before Facebook's own click handler ever sees it, instead
+            // of only cleaning up after the fact.
+            js.append("if(!window.__slimClickGuard){window.__slimClickGuard=true;function __slimNavTarget(e){var t=e.target;if(t&&t.nodeType===3)t=t.parentElement;var a=t&&t.closest?t.closest('a[href]'):null;return a?a.href:null;}function __slimNavHandle(e){if(window.__slimInstantLockActive)return;var h=__slimNavTarget(e);if(!h||!window.SlimBridge)return;try{if(SlimBridge.wouldBlockNav(h)){e.preventDefault();e.stopImmediatePropagation();try{SlimBridge.reportPreemptiveBlock();}catch(x){}}}catch(x){}}['pointerdown','touchend','click'].forEach(function(evt){document.addEventListener(evt,__slimNavHandle,true);});}")
         }
         // PHOTO FEED MODE is explicitly controlled by the user setting.
         // When OFF, do not touch Facebook's normal photo layout at all.

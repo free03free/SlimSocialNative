@@ -769,6 +769,8 @@ class MainActivity : Activity() {
     }
 
     private fun checkPasswordThen(action: () -> Unit) {
+        val protectionEnabled = prefs.getBoolean("settings_protection_enabled", true)
+        if (!protectionEnabled) { action(); return }
         val saved = prefs.getString("app_password", null)
         if (saved.isNullOrEmpty()) {
             val input = EditText(this)
@@ -1200,17 +1202,41 @@ class MainActivity : Activity() {
                 }.setNegativeButton("إلغاء", null).show()
         }
         privacy.addView(changePwd)
-        val removePwd = Button(this).apply { text = "🔓 إلغاء حماية الإعدادات" }
-        removePwd.setOnClickListener {
-            AlertDialog.Builder(this).setTitle("إلغاء حماية الإعدادات")
-                .setMessage("سيتم حذف رمز PIN وستفتح الإعدادات بدون طلب كلمة مرور في المرة القادمة. هل تريد المتابعة؟")
-                .setPositiveButton("نعم، إلغاء الحماية") { _, _ ->
-                    prefs.edit().remove("app_password").apply()
-                    notifyUser("تم إلغاء حماية الإعدادات")
-                }
-                .setNegativeButton("إلغاء", null).show()
+        val protectionOn = prefs.getBoolean("settings_protection_enabled", true)
+        val toggleProtection = Button(this).apply {
+            text = if (protectionOn) "🔓 إلغاء حماية الإعدادات (فتح مباشر بدون رمز)" else "🔒 إعادة تفعيل حماية الإعدادات"
         }
-        privacy.addView(removePwd)
+        toggleProtection.setOnClickListener {
+            if (prefs.getBoolean("settings_protection_enabled", true)) {
+                AlertDialog.Builder(this).setTitle("إلغاء حماية الإعدادات")
+                    .setMessage("ستفتح الإعدادات مباشرة بدون طلب رمز PIN في كل مرة. رمزك الحالي يبقى محفوظًا ويمكنك إعادة تفعيل الحماية به لاحقًا. هل تريد المتابعة؟")
+                    .setPositiveButton("نعم، إلغاء الحماية") { _, _ ->
+                        prefs.edit().putBoolean("settings_protection_enabled", false).apply()
+                        notifyUser("تم إلغاء حماية الإعدادات — ستفتح الإعدادات مباشرة")
+                    }
+                    .setNegativeButton("إلغاء", null).show()
+            } else {
+                val hasPin = !prefs.getString("app_password", null).isNullOrEmpty()
+                if (hasPin) {
+                    prefs.edit().putBoolean("settings_protection_enabled", true).apply()
+                    notifyUser("تم تفعيل الحماية بنفس الرمز السابق")
+                } else {
+                    val input = EditText(this).apply {
+                        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+                        hint = "اختر رمز PIN من 4 أرقام"
+                    }
+                    AlertDialog.Builder(this).setTitle("تفعيل حماية الإعدادات").setView(input)
+                        .setPositiveButton("حفظ") { _, _ ->
+                            if (input.text.toString().length >= 4) {
+                                prefs.edit().putString("app_password", input.text.toString())
+                                    .putBoolean("settings_protection_enabled", true).apply()
+                                notifyUser("تم تفعيل الحماية")
+                            } else notifyUser("4 أرقام على الأقل")
+                        }.setNegativeButton("إلغاء", null).show()
+                }
+            }
+        }
+        privacy.addView(toggleProtection)
 
         val rules = section("JavaScript / CSS", "🧩")
         rules.addView(TextView(this).apply {

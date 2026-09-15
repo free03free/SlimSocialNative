@@ -2033,9 +2033,37 @@ val info = TextView(this).apply {
             val js = EditText(this).apply { hint = "JavaScript"; setText(existing?.optString("js", "") ?: ""); minLines = 7; gravity = Gravity.TOP; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE }
             val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(12, 0, 12, 0) }
             form.addView(name); form.addView(enabled); form.addView(scopeSpinner); form.addView(urlInput); form.addView(priority)
+            fun quickActionsRow(target: EditText): LinearLayout {
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                val pasteBtn = Button(this).apply { text = "📋 لصق (استبدال)" }
+                pasteBtn.setOnClickListener {
+                    val cb = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    val clip = cb.primaryClip
+                    if (clip != null && clip.itemCount > 0) {
+                        val pasted = clip.getItemAt(0).coerceToText(this).toString()
+                        if (pasted.isNotEmpty()) {
+                            target.setText(pasted)
+                            target.setSelection(target.text.length)
+                            notifyUser("تم لصق الكود")
+                        } else {
+                            notifyUser("الحافظة فارغة")
+                        }
+                    } else {
+                        notifyUser("الحافظة فارغة")
+                    }
+                }
+                val clearBtn = Button(this).apply { text = "🗑 مسح" }
+                clearBtn.setOnClickListener {
+                    target.setText("")
+                    notifyUser("تم المسح")
+                }
+                row.addView(pasteBtn); row.addView(clearBtn)
+                return row
+            }
             val cssLabel = TextView(this).apply { text = "CSS"; setPadding(0, 10, 0, 2) }
             val jsLabel = TextView(this).apply { text = "JavaScript"; setPadding(0, 10, 0, 2) }
-            form.addView(cssLabel); form.addView(css); form.addView(jsLabel); form.addView(js)
+            form.addView(cssLabel); form.addView(quickActionsRow(css)); form.addView(css)
+            form.addView(jsLabel); form.addView(quickActionsRow(js)); form.addView(js)
             val scroll = ScrollView(this).apply { addView(form) }
 
             val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "إضافة قاعدة JS/CSS" else "تعديل قاعدة JS/CSS")

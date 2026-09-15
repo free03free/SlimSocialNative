@@ -253,13 +253,19 @@ class MainActivity : Activity() {
 
         homeBtn = Button(this).apply {
             text = "🏠"
-            textSize = 20f
+            textSize = 30f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.TRANSPARENT)
+            setPadding(0, 0, 0, 0)
+            minWidth = 0
+            minHeight = 0
+            minimumWidth = 0
+            minimumHeight = 0
             setOnClickListener { clearRestrictedSession(); web.loadUrl(getHomeUrl()) }
             setOnLongClickListener { showPagesChooser(); true }
         }
-        (reloadBtn.parent as? ViewGroup)?.addView(homeBtn)
+        val iconSizePx = (46 * resources.displayMetrics.density).toInt()
+        (reloadBtn.parent as? ViewGroup)?.addView(homeBtn, LinearLayout.LayoutParams(iconSizePx, iconSizePx))
 
         applyToolbarVisibility(menuBtn, reloadBtn)
 

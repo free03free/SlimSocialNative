@@ -19,6 +19,8 @@ import java.util.*
 class MainActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var homeBtn: Button
+    private lateinit var zoomWidget: LinearLayout
+    private lateinit var zoomLevelLabel: TextView
     @Volatile private var videoPlaying = false
     @Volatile private var scheduleBypassed = false
     private val prefs by lazy { getSharedPreferences("controls", MODE_PRIVATE) }
@@ -74,6 +76,13 @@ class MainActivity : Activity() {
         }, "SlimRuleBridge")
         web.settings.domStorageEnabled = true
         web.settings.userAgentString = WebSettings.getDefaultUserAgent(this).replace("; wv", "").replace("wv;", "")
+        // Native pinch-zoom as an extra layer; the real guarantee that zoom works even
+        // when Facebook's own page tries to block it is the CSS-zoom override in
+        // applyPageZoom() below, which does not depend on this.
+        web.settings.setSupportZoom(true)
+        web.settings.builtInZoomControls = true
+        web.settings.displayZoomControls = false
+        web.settings.useWideViewPort = true
         applyCopyProtection()
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
@@ -295,6 +304,7 @@ class MainActivity : Activity() {
         (reloadBtn.parent as? ViewGroup)?.addView(homeBtn, LinearLayout.LayoutParams(iconSizePx, iconSizePx))
 
         applyToolbarVisibility(menuBtn, reloadBtn)
+        setupZoomWidget()
 
         val root = findViewById<View>(android.R.id.content)
         root.setOnClickListener {
@@ -1036,6 +1046,152 @@ class MainActivity : Activity() {
         }
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
+        applyPageZoom()
+    }
+
+    // ---- Facebook page zoom ------------------------------------------------
+    // Lets the user enlarge/shrink the Facebook page and pan around it. Uses the
+    // CSS `zoom` property on <html> (not native pinch-zoom alone) because Facebook's
+    // own viewport meta tag often sets user-scalable=no, which would otherwise block
+    // zoom entirely. We also rewrite that meta tag and keep a MutationObserver in
+    // place so the zoom level survives Facebook's own SPA re-renders / any attempt
+    // to reset it — i.e. it keeps working even when the page tries to block it.
+    private fun currentZoomLevel(): Float = prefs.getFloat("zoom_level", 1.0f)
+
+    private fun setZoomLevel(level: Float) {
+        val clamped = level.coerceIn(0.5f, 3.0f)
+        prefs.edit().putFloat("zoom_level", clamped).apply()
+        if (::zoomLevelLabel.isInitialized) zoomLevelLabel.text = "${(clamped * 100).toInt()}%"
+        if (!isAuth(web.url ?: "")) applyPageZoom()
+    }
+
+    private fun applyPageZoom() {
+        if (!web.settings.javaScriptEnabled) return
+        val enabled = prefs.getBoolean("zoom_enabled", false)
+        val level = currentZoomLevel()
+        val js = """
+            (function(){
+                try {
+                    var meta = document.querySelector('meta[name="viewport"]');
+                    if ($enabled) {
+                        if (meta && meta.__slimOrig === undefined) { meta.__slimOrig = meta.getAttribute('content') || ''; }
+                        if (meta) meta.setAttribute('content','width=device-width, initial-scale=1, maximum-scale=10, minimum-scale=0.5, user-scalable=yes');
+                        window.__slimZoomTarget = '$level';
+                        document.documentElement.style.setProperty('zoom', window.__slimZoomTarget, 'important');
+                        if (!window.__slimZoomGuard) {
+                            window.__slimZoomGuard = true;
+                            new MutationObserver(function(){
+                                if (window.__slimZoomTarget && document.documentElement.style.zoom !== window.__slimZoomTarget) {
+                                    document.documentElement.style.setProperty('zoom', window.__slimZoomTarget, 'important');
+                                }
+                            }).observe(document.documentElement, {attributes:true, attributeFilter:['style']});
+                        }
+                    } else {
+                        window.__slimZoomTarget = null;
+                        document.documentElement.style.removeProperty('zoom');
+                        if (meta && meta.__slimOrig !== undefined) meta.setAttribute('content', meta.__slimOrig);
+                    }
+                } catch (e) {}
+            })();
+        """.trimIndent()
+        web.evaluateJavascript(js, null)
+    }
+
+    private fun updateZoomWidgetVisibility() {
+        if (!::zoomWidget.isInitialized) return
+        zoomWidget.visibility = if (prefs.getBoolean("zoom_enabled", false)) View.VISIBLE else View.GONE
+    }
+
+    // Small draggable floating pill: drag by the ⠿ handle, tap +/－ to zoom, tap the
+    // percentage to reset to 100%. Position is remembered across launches.
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupZoomWidget() {
+        val d = resources.displayMetrics.density
+        zoomWidget = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((8 * d).toInt(), (4 * d).toInt(), (8 * d).toInt(), (4 * d).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.argb(210, 30, 30, 30))
+                cornerRadius = 30f * d
+            }
+            elevation = 12f * d
+        }
+
+        val handle = TextView(this).apply {
+            text = "⠿"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setPadding((6 * d).toInt(), (6 * d).toInt(), (10 * d).toInt(), (6 * d).toInt())
+        }
+        val minusBtn = TextView(this).apply {
+            text = "－"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            setPadding((10 * d).toInt(), (4 * d).toInt(), (10 * d).toInt(), (4 * d).toInt())
+            setOnClickListener { setZoomLevel(currentZoomLevel() - 0.1f) }
+        }
+        zoomLevelLabel = TextView(this).apply {
+            text = "${(currentZoomLevel() * 100).toInt()}%"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding((6 * d).toInt(), 0, (6 * d).toInt(), 0)
+            setOnClickListener { setZoomLevel(1.0f) }
+        }
+        val plusBtn = TextView(this).apply {
+            text = "＋"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            setPadding((10 * d).toInt(), (4 * d).toInt(), (10 * d).toInt(), (4 * d).toInt())
+            setOnClickListener { setZoomLevel(currentZoomLevel() + 0.1f) }
+        }
+        zoomWidget.addView(handle)
+        zoomWidget.addView(minusBtn)
+        zoomWidget.addView(zoomLevelLabel)
+        zoomWidget.addView(plusBtn)
+
+        val contentRoot = findViewById<FrameLayout>(android.R.id.content)
+        val lp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT)
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.leftMargin = prefs.getInt("zoom_widget_x", (24 * d).toInt())
+        lp.topMargin = prefs.getInt("zoom_widget_y", (160 * d).toInt())
+        contentRoot.addView(zoomWidget, lp)
+
+        var downRawX = 0f
+        var downRawY = 0f
+        var startMarginX = 0
+        var startMarginY = 0
+        var dragging = false
+        handle.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX; downRawY = event.rawY
+                    startMarginX = lp.leftMargin; startMarginY = lp.topMargin
+                    dragging = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - downRawX).toInt()
+                    val dy = (event.rawY - downRawY).toInt()
+                    if (kotlin.math.abs(dx) > 6 || kotlin.math.abs(dy) > 6) dragging = true
+                    if (dragging) {
+                        lp.leftMargin = (startMarginX + dx).coerceAtLeast(0)
+                        lp.topMargin = (startMarginY + dy).coerceAtLeast(0)
+                        zoomWidget.layoutParams = lp
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (dragging) {
+                        prefs.edit().putInt("zoom_widget_x", lp.leftMargin).putInt("zoom_widget_y", lp.topMargin).apply()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
+        updateZoomWidgetVisibility()
     }
 
     // Silent mode hides non-critical Toast messages without disabling or changing
@@ -1180,6 +1336,28 @@ class MainActivity : Activity() {
         }
         media.addView(swVideoSwipeCombo)
         addSwitch(media, "media_viewer", "فتح الصور والفيديوهات داخل التطبيق", refresh = false)
+
+        val zoomSection = section("تكبير صفحة فيسبوك", "🔍")
+        val swZoom = Switch(this).apply {
+            text = "تفعيل زر التكبير/التصغير العائم"
+            isChecked = prefs.getBoolean("zoom_enabled", false)
+            setPadding(4, 8, 4, 8)
+        }
+        swZoom.setOnCheckedChangeListener { _, value ->
+            prefs.edit().putBoolean("zoom_enabled", value).apply()
+            updateZoomWidgetVisibility()
+            if (!isAuth(web.url ?: "")) applyPageZoom()
+        }
+        zoomSection.addView(swZoom)
+        zoomSection.addView(TextView(this).apply {
+            text = "عند التفعيل تظهر أداة عائمة صغيرة (＋ / － / النسبة) فوق الصفحة، يمكن سحبها من علامة ⠿ لأي مكان على الشاشة. الضغط على النسبة يعيد التكبير إلى 100%. هذا التكبير يعمل حتى لو كانت صفحة فيسبوك نفسها تمنع تكبير الشاشة بلمستين."
+            setTextColor(Color.GRAY); textSize = 12f; setPadding(4, 0, 4, 8)
+        })
+        val zoomRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val zoomResetBtn = Button(this).apply { text = "إعادة التعيين 100%" }
+        zoomResetBtn.setOnClickListener { setZoomLevel(1.0f) }
+        zoomRow.addView(zoomResetBtn)
+        zoomSection.addView(zoomRow)
 
         val navigation = section("التنقل والصفحات", "🧭")
         addSwitch(navigation, "block_profile_nav", "منع زيارة أي بروفايل / صفحة / مجموعة", refresh = false)

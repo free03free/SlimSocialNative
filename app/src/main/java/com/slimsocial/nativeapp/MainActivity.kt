@@ -989,166 +989,20 @@ class MainActivity : Activity() {
             js.append("if(!window.__slimClickGuard){window.__slimClickGuard=true;function __slimNavTarget(e){var t=e.target;if(t&&t.nodeType===3)t=t.parentElement;var a=t&&t.closest?t.closest('a[href]'):null;return a?a.href:null;}function __slimNavHandle(e){if(window.__slimInstantLockActive)return;var h=__slimNavTarget(e);if(!h||!window.SlimBridge)return;try{if(SlimBridge.wouldBlockNav(h)){e.preventDefault();e.stopImmediatePropagation();try{SlimBridge.reportPreemptiveBlock();}catch(x){}}}catch(x){}}['pointerdown','touchend','click'].forEach(function(evt){document.addEventListener(evt,__slimNavHandle,true);});}")
         }
         // PHOTO FEED MODE is explicitly controlled by the user setting.
-        // This version targets ONLY the actual multi-photo container.  It deliberately
-        // does not use background-image detection, because Facebook's action icons can
-        // also be background/SVG assets and were being affected by the previous code.
+        // When OFF, do not touch Facebook's normal photo layout at all.
         val verticalPhotoMode = prefs.getBoolean("vertical_photo_mode", false)
         if (verticalPhotoMode) {
-            js.append("""if(!window.__slimVerticalPhotosV2){
-window.__slimVerticalPhotosV2=true;
-
-function __slimRealPhoto(el){
-    if(!el||el.nodeType!==1)return false;
-    if(el.tagName==='IMG'){
-        var src=el.currentSrc||el.src||el.getAttribute('src')||el.getAttribute('data-src')||'';
-        return !!src;
-    }
-    return el.tagName==='VIDEO';
-}
-
-function __slimPhotoElements(root){
-    if(!root||root.nodeType!==1)return [];
-    var out=[];
-    if(__slimRealPhoto(root))out.push(root);
-    var q=root.querySelectorAll('img,video');
-    for(var i=0;i<q.length;i++){
-        if(__slimRealPhoto(q[i]))out.push(q[i]);
-        if(out.length>12)break;
-    }
-    return out;
-}
-
-// Find the LOWEST ancestor that contains at least two real photo/video elements.
-// We do not require direct children because Facebook frequently nests each photo
-// inside several anonymous wrappers.  We also ignore CSS background images so that
-// the Like/Comment/Share icons can never become part of the photo group.
-function __slimFindPhotoGroup(photo){
-    var n=photo&&photo.parentElement;
-    var best=null;
-    for(var depth=0;n&&depth<12;depth++,n=n.parentElement){
-        var photos=__slimPhotoElements(n);
-        if(photos.length>=2 && photos.length<=12){
-            best=n;
-            break;
-        }
-    }
-    return best;
-}
-
-function __slimCleanOldVertical(){
-    document.querySelectorAll('[data-slim-vertical-v2]').forEach(function(el){
-        el.removeAttribute('data-slim-vertical-v2');
-        el.style.removeProperty('display');
-        el.style.removeProperty('width');
-        el.style.removeProperty('max-width');
-        el.style.removeProperty('height');
-        el.style.removeProperty('min-width');
-        el.style.removeProperty('min-height');
-        el.style.removeProperty('grid-template-columns');
-        el.style.removeProperty('grid-template-rows');
-        el.style.removeProperty('grid-auto-flow');
-        el.style.removeProperty('flex-direction');
-        el.style.removeProperty('flex-wrap');
-        el.style.removeProperty('flex');
-        el.style.removeProperty('flex-basis');
-        el.style.removeProperty('float');
-        el.style.removeProperty('clear');
-        el.style.removeProperty('overflow');
-        el.style.removeProperty('margin');
-    });
-    document.querySelectorAll('.slim-vertical-photo-v2').forEach(function(el){
-        el.classList.remove('slim-vertical-photo-v2');
-        el.style.removeProperty('display');
-        el.style.removeProperty('width');
-        el.style.removeProperty('max-width');
-        el.style.removeProperty('height');
-        el.style.removeProperty('object-fit');
-        el.style.removeProperty('object-position');
-    });
-}
-window.__slimCleanOldVertical=__slimCleanOldVertical;
-
-function __slimApplyVerticalGroup(group){
-    if(!group)return;
-    var photos=__slimPhotoElements(group);
-    if(photos.length<2)return;
-
-    group.setAttribute('data-slim-vertical-v2','1');
-
-    // Force the photo container itself into one column.  Both flex and grid are
-    // neutralised so Facebook cannot keep the original two-column mosaic.
-    group.style.setProperty('display','block','important');
-    group.style.setProperty('width','100%','important');
-    group.style.setProperty('max-width','100%','important');
-    group.style.setProperty('height','auto','important');
-    group.style.setProperty('grid-template-columns','none','important');
-    group.style.setProperty('grid-template-rows','none','important');
-    group.style.setProperty('grid-auto-flow','row','important');
-    group.style.setProperty('flex-direction','column','important');
-    group.style.setProperty('flex-wrap','nowrap','important');
-    group.style.setProperty('overflow','visible','important');
-
-    // For each photo, make only the wrapper chain between the photo and the
-    // identified group a full-width block.  This is what converts Facebook's
-    // nested two-column cells into: photo 1 / photo 2 / photo 3 / photo 4.
-    photos.forEach(function(photo){
-        var node=photo;
-        while(node && node!==group){
-            node.setAttribute('data-slim-vertical-v2','1');
-            node.style.setProperty('display','block','important');
-            node.style.setProperty('width','100%','important');
-            node.style.setProperty('max-width','100%','important');
-            node.style.setProperty('height','auto','important');
-            node.style.setProperty('min-width','0','important');
-            node.style.setProperty('min-height','0','important');
-            node.style.setProperty('float','none','important');
-            node.style.setProperty('clear','both','important');
-            node.style.setProperty('flex','none','important');
-            node.style.setProperty('flex-basis','auto','important');
-            node=node.parentElement;
-        }
-
-        photo.classList.add('slim-vertical-photo-v2');
-        photo.style.setProperty('display','block','important');
-        photo.style.setProperty('width','100%','important');
-        photo.style.setProperty('max-width','100%','important');
-        photo.style.setProperty('height','auto','important');
-        photo.style.setProperty('object-fit','contain','important');
-        photo.style.setProperty('object-position','center center','important');
-    });
-}
-
-function __slimPhotoPass(){
-    if(!document.documentElement)return;
-    var photos=document.querySelectorAll('img,video');
-    var groups=[];
-    for(var i=0;i<photos.length;i++){
-        if(!__slimRealPhoto(photos[i]))continue;
-        var g=__slimFindPhotoGroup(photos[i]);
-        if(g&&groups.indexOf(g)<0)groups.push(g);
-    }
-    for(var j=0;j<groups.length;j++)__slimApplyVerticalGroup(groups[j]);
-}
-
-__slimPhotoPass();
-
-if(!window.__slimVerticalPhotoObserverV2){
-    window.__slimVerticalPhotoObserverV2=new MutationObserver(function(){
-        clearTimeout(window.__slimVerticalPhotoTimerV2);
-        window.__slimVerticalPhotoTimerV2=setTimeout(__slimPhotoPass,250);
-    });
-    window.__slimVerticalPhotoObserverV2.observe(document.documentElement,{childList:true,subtree:true});
-}
-window.addEventListener('load',__slimPhotoPass);
-window.addEventListener('resize',__slimPhotoPass);
-if(window.__slimVerticalPhotoTimerIntervalV2)clearInterval(window.__slimVerticalPhotoTimerIntervalV2);
-window.__slimVerticalPhotoTimerIntervalV2=setInterval(__slimPhotoPass,1500);
-}""")
-            js.append("s+='html,body{max-width:100%!important;overflow-x:hidden!important;} .slim-vertical-photo-v2{box-sizing:border-box!important;display:block!important;width:100%!important;max-width:100%!important;height:auto!important;object-fit:contain!important;}';")
+            // ROBUST PHOTO VERTICAL MODE: Facebook frequently changes its DOM and may
+            // lazy-load thumbnails. Do not depend on naturalWidth/naturalHeight and do
+            // not assume a specific Facebook class name. Find the nearest common photo
+            // container, then force its layout and every photo wrapper into one column.
+            js.append("""if(!window.__slimVerticalPhotos){window.__slimVerticalPhotos=true;function __slimIsControl(el){var a=el;for(var i=0;a&&i<4;i++,a=a.parentElement){var role=(a.getAttribute&&a.getAttribute('role'))||'';var aria=(a.getAttribute&&a.getAttribute('aria-label'))||'';if((role==='button'||role==='link')&&/^(like|comment|share|react|reply|save|follow|send|إعجاب|أعجبني|تعليق|مشاركة|رد|متابعة|حفظ|عرض المزيد|see more)/i.test(aria.trim())){return true;}}return false;}function __slimMedia(el){if(!el)return false;if(__slimIsControl(el))return false;var r=el.getBoundingClientRect(),cs=getComputedStyle(el),bg=cs.backgroundImage||'';if(r.width<60||r.height<40)return false;if((r.width*r.height)<7200)return false;if(el.tagName==='IMG'){var s=(el.currentSrc||el.src||'');if(s.length<=10)return false;if(/\/rsrc\.php\//i.test(s))return false;return true;}if(el.tagName==='VIDEO')return true;if(bg.indexOf('url(')<0)return false;if(/\/rsrc\.php\//i.test(bg))return false;return true;}function __slimMediaNodes(root){return Array.from(root.querySelectorAll('img,video,[style*="background-image" i]')).filter(__slimMedia);}function __slimForce(el,first){if(!el)return;el.style.setProperty('display','block','important');el.style.setProperty('width','100%','important');el.style.setProperty('max-width','100%','important');el.style.setProperty('height','auto','important');el.style.setProperty('min-height','0','important');el.style.setProperty('min-width','0','important');el.style.setProperty('float','none','important');el.style.setProperty('clear','both','important');el.style.setProperty('grid-column','1 / -1','important');el.style.setProperty('grid-row','auto','important');el.style.setProperty('flex','0 0 auto','important');el.style.setProperty('flex-basis','auto','important');el.style.setProperty('position','static','important');el.style.setProperty('transform','none','important');el.style.setProperty('inset','auto','important');el.style.setProperty('margin',first?'0':'0 0 8px 0','important');}function __slimPhotoPass(){var all=Array.from(document.querySelectorAll('img,video,[style*="background-image" i]')).filter(__slimMedia);var done=[];all.forEach(function(m){var g=null,n=m.parentElement;for(var d=0;n&&d<35;d++,n=n.parentElement){var q=__slimMediaNodes(n);if(q.length>=2&&q.length<=500){g=n;break;}}if(!g||done.indexOf(g)>=0)return;var media=__slimMediaNodes(g);if(media.length<2||media.length>500)return;done.push(g);g.classList.add('slim-vertical-photo-group');g.style.setProperty('display','block','important');g.style.setProperty('width','100%','important');g.style.setProperty('max-width','100%','important');g.style.setProperty('height','auto','important');g.style.setProperty('overflow','visible','important');g.style.setProperty('position','static','important');g.style.setProperty('grid-template-columns','none','important');g.style.setProperty('grid-template-rows','none','important');g.style.setProperty('flex-direction','column','important');g.style.setProperty('flex-wrap','nowrap','important');media.forEach(function(x,i){var chain=[],a=x;for(var z=0;a&&a!==g&&z<35;z++,a=a.parentElement)chain.push(a);chain.forEach(function(c){__slimForce(c,c.parentElement===g);});if(x.tagName==='IMG'){x.style.setProperty('object-fit','contain','important');x.style.setProperty('object-position','center center','important');x.style.setProperty('visibility','visible','important');x.style.setProperty('opacity','1','important');}if(x.tagName==='VIDEO'){x.style.setProperty('object-fit','contain','important');}x.classList.add('slim-vertical-photo');});});}__slimPhotoPass();if(!window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver=new MutationObserver(function(){clearTimeout(window.__slimVerticalPhotoTimer);window.__slimVerticalPhotoTimer=setTimeout(__slimPhotoPass,150);});window.__slimVerticalPhotoObserver.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class','src','srcset']});}window.addEventListener('load',__slimPhotoPass);window.addEventListener('resize',__slimPhotoPass);window.__slimPhotoTimer=setInterval(__slimPhotoPass,800);}""")
+            js.append("s+='html,body{max-width:100%!important;overflow-x:hidden!important;} .slim-vertical-photo-group{display:block!important;width:100%!important;max-width:100%!important;height:auto!important;background:transparent!important;border:0!important;box-shadow:none!important;overflow:visible!important;position:static!important;} .slim-vertical-photo-group *{box-sizing:border-box!important;} .slim-vertical-photo-group img.slim-vertical-photo,.slim-vertical-photo-group video.slim-vertical-photo{display:block!important;float:none!important;clear:both!important;position:static!important;transform:none!important;inset:auto!important;width:100%!important;max-width:100%!important;height:auto!important;min-height:0!important;object-fit:contain!important;background:transparent!important;border:0!important;box-shadow:none!important;visibility:visible!important;opacity:1!important;}';")
         } else {
-            js.append("if(window.__slimVerticalPhotoObserverV2){window.__slimVerticalPhotoObserverV2.disconnect();window.__slimVerticalPhotoObserverV2=null;}if(window.__slimVerticalPhotoTimerV2){clearTimeout(window.__slimVerticalPhotoTimerV2);window.__slimVerticalPhotoTimerV2=null;}if(window.__slimVerticalPhotoTimerIntervalV2){clearInterval(window.__slimVerticalPhotoTimerIntervalV2);window.__slimVerticalPhotoTimerIntervalV2=null;}if(window.__slimCleanOldVertical){try{window.__slimCleanOldVertical();}catch(e){}}window.__slimVerticalPhotosV2=false;")
+            // Remove any previous mode injected into the current SPA document when the
+            // user switches the setting OFF.
+            js.append("if(window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver.disconnect();window.__slimVerticalPhotoObserver=null;}document.querySelectorAll('.slim-vertical-photo-group').forEach(function(e){e.classList.remove('slim-vertical-photo-group');});document.querySelectorAll('.slim-vertical-photo').forEach(function(e){e.classList.remove('slim-vertical-photo');});")
         }
-
         val keywords = getKeywordList()
         val kwJson = "[" + keywords.joinToString(",") { JSONObject.quote(it) } + "]"
         js.append("window.__slimKeywords=").append(kwJson).append(";")

@@ -992,16 +992,197 @@ class MainActivity : Activity() {
         // When OFF, do not touch Facebook's normal photo layout at all.
         val verticalPhotoMode = prefs.getBoolean("vertical_photo_mode", false)
         if (verticalPhotoMode) {
-            // ROBUST PHOTO VERTICAL MODE: Facebook frequently changes its DOM and may
-            // lazy-load thumbnails. Do not depend on naturalWidth/naturalHeight and do
-            // not assume a specific Facebook class name. Find the nearest common photo
-            // container, then force its layout and every photo wrapper into one column.
-            js.append("""if(!window.__slimVerticalPhotos){window.__slimVerticalPhotos=true;function __slimMedia(el){if(!el)return false;var r=el.getBoundingClientRect(),cs=getComputedStyle(el),bg=cs.backgroundImage||'';if(r.width<60||r.height<40)return false;if(el.tagName==='IMG')return !!((el.currentSrc||el.src||'').length>10);if(el.tagName==='VIDEO')return true;return bg.indexOf('url(')>=0;}function __slimMediaNodes(root){return Array.from(root.querySelectorAll('img,video,[style*="background-image" i]')).filter(__slimMedia);}function __slimForce(el,first){if(!el)return;el.style.setProperty('display','block','important');el.style.setProperty('width','100%','important');el.style.setProperty('max-width','100%','important');el.style.setProperty('height','auto','important');el.style.setProperty('min-height','0','important');el.style.setProperty('min-width','0','important');el.style.setProperty('float','none','important');el.style.setProperty('clear','both','important');el.style.setProperty('grid-column','1 / -1','important');el.style.setProperty('grid-row','auto','important');el.style.setProperty('flex','0 0 auto','important');el.style.setProperty('flex-basis','auto','important');el.style.setProperty('position','static','important');el.style.setProperty('transform','none','important');el.style.setProperty('inset','auto','important');el.style.setProperty('margin',first?'0':'0 0 8px 0','important');}function __slimPhotoPass(){var all=Array.from(document.querySelectorAll('img,video,[style*="background-image" i]')).filter(__slimMedia);var done=[];all.forEach(function(m){var g=null,n=m.parentElement;for(var d=0;n&&d<35;d++,n=n.parentElement){var q=__slimMediaNodes(n);if(q.length>=2&&q.length<=30){g=n;break;}}if(!g||done.indexOf(g)>=0)return;var media=__slimMediaNodes(g);if(media.length<2||media.length>30)return;done.push(g);g.classList.add('slim-vertical-photo-group');g.style.setProperty('display','block','important');g.style.setProperty('width','100%','important');g.style.setProperty('max-width','100%','important');g.style.setProperty('height','auto','important');g.style.setProperty('overflow','visible','important');g.style.setProperty('position','static','important');g.style.setProperty('grid-template-columns','none','important');g.style.setProperty('grid-template-rows','none','important');g.style.setProperty('flex-direction','column','important');g.style.setProperty('flex-wrap','nowrap','important');media.forEach(function(x,i){var chain=[],a=x;for(var z=0;a&&a!==g&&z<35;z++,a=a.parentElement)chain.push(a);chain.forEach(function(c){__slimForce(c,c.parentElement===g);});if(x.tagName==='IMG'){x.style.setProperty('object-fit','contain','important');x.style.setProperty('object-position','center center','important');x.style.setProperty('visibility','visible','important');x.style.setProperty('opacity','1','important');}if(x.tagName==='VIDEO'){x.style.setProperty('object-fit','contain','important');}x.classList.add('slim-vertical-photo');});});}__slimPhotoPass();if(!window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver=new MutationObserver(function(){clearTimeout(window.__slimVerticalPhotoTimer);window.__slimVerticalPhotoTimer=setTimeout(__slimPhotoPass,150);});window.__slimVerticalPhotoObserver.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class','src','srcset']});}window.addEventListener('load',__slimPhotoPass);window.addEventListener('resize',__slimPhotoPass);window.__slimPhotoTimer=setInterval(__slimPhotoPass,800);}""")
-            js.append("s+='html,body{max-width:100%!important;overflow-x:hidden!important;} .slim-vertical-photo-group{display:block!important;width:100%!important;max-width:100%!important;height:auto!important;background:transparent!important;border:0!important;box-shadow:none!important;overflow:visible!important;position:static!important;} .slim-vertical-photo-group *{box-sizing:border-box!important;} .slim-vertical-photo-group img.slim-vertical-photo,.slim-vertical-photo-group video.slim-vertical-photo{display:block!important;float:none!important;clear:both!important;position:static!important;transform:none!important;inset:auto!important;width:100%!important;max-width:100%!important;height:auto!important;min-height:0!important;object-fit:contain!important;background:transparent!important;border:0!important;box-shadow:none!important;visibility:visible!important;opacity:1!important;}';")
+            // FIXED PHOTO VERTICAL MODE:
+            // Do not rewrite the whole post or climb through arbitrary ancestors.
+            // Facebook photo posts are often rendered as a CSS grid/flex mosaic.
+            // We locate the smallest container whose direct children are individual
+            // media slots (one image/video per child), then change ONLY that container
+            // and those slots to a single vertical column. This avoids the old behaviour
+            // that could turn a whole post grey/blank or affect the text/action area.
+            js.append("""if(!window.__slimVerticalPhotos){
+window.__slimVerticalPhotos=true;
+
+function __slimIsMedia(el){
+    if(!el||el.nodeType!==1)return false;
+    if(el.tagName==='IMG'){
+        var src=el.currentSrc||el.src||el.getAttribute('src')||el.getAttribute('data-src')||'';
+        return !!src;
+    }
+    if(el.tagName==='VIDEO')return true;
+    var cs=getComputedStyle(el);
+    return !!(cs.backgroundImage&&cs.backgroundImage!=='none'&&cs.backgroundImage.indexOf('url(')>=0);
+}
+
+function __slimMediaCount(root){
+    if(!root||root.nodeType!==1)return 0;
+    var n=0;
+    if(__slimIsMedia(root))n++;
+    var q=root.querySelectorAll('img,video,[style*="background-image" i]');
+    for(var i=0;i<q.length;i++){
+        if(__slimIsMedia(q[i]))n++;
+        if(n>12)return n;
+    }
+    return n;
+}
+
+function __slimDirectMediaSlots(group){
+    if(!group||!group.children)return [];
+    var out=[];
+    for(var i=0;i<group.children.length;i++){
+        var c=group.children[i];
+        var count=__slimMediaCount(c);
+        if(count===1)out.push(c);
+    }
+    return out;
+}
+
+function __slimFindVerticalGroup(media){
+    var n=media&&media.parentElement;
+    var best=null;
+    for(var depth=0;n&&depth<16;depth++,n=n.parentElement){
+        var slots=__slimDirectMediaSlots(n);
+        if(slots.length>=2){
+            // Every direct slot must contain exactly one media item.
+            // This rejects Facebook's two-column wrappers that contain several photos.
+            var totalChildren=n.children.length;
+            if(slots.length===totalChildren && totalChildren<=12){
+                best=n;
+                break;
+            }
+        }
+    }
+    return best;
+}
+
+function __slimCleanOldVertical(){
+    document.querySelectorAll('[data-slim-vertical-group],.slim-vertical-photo-group').forEach(function(g){
+        g.removeAttribute('data-slim-vertical-group');
+        g.style.removeProperty('display');
+        g.style.removeProperty('width');
+        g.style.removeProperty('max-width');
+        g.style.removeProperty('height');
+        g.style.removeProperty('overflow');
+        g.style.removeProperty('grid-template-columns');
+        g.style.removeProperty('grid-template-rows');
+        g.style.removeProperty('flex-direction');
+        g.style.removeProperty('flex-wrap');
+        g.style.removeProperty('gap');
+        g.classList.remove('slim-vertical-photo-group');
+    });
+    document.querySelectorAll('[data-slim-vertical-slot]').forEach(function(s){
+        s.removeAttribute('data-slim-vertical-slot');
+        s.style.removeProperty('display');
+        s.style.removeProperty('width');
+        s.style.removeProperty('max-width');
+        s.style.removeProperty('height');
+        s.style.removeProperty('min-width');
+        s.style.removeProperty('min-height');
+        s.style.removeProperty('float');
+        s.style.removeProperty('clear');
+        s.style.removeProperty('grid-column');
+        s.style.removeProperty('grid-row');
+        s.style.removeProperty('flex');
+        s.style.removeProperty('flex-basis');
+        s.style.removeProperty('margin');
+    });
+    document.querySelectorAll('.slim-vertical-photo').forEach(function(m){
+        m.classList.remove('slim-vertical-photo');
+        m.style.removeProperty('display');
+        m.style.removeProperty('width');
+        m.style.removeProperty('max-width');
+        m.style.removeProperty('height');
+        m.style.removeProperty('object-fit');
+        m.style.removeProperty('object-position');
+        m.style.removeProperty('visibility');
+        m.style.removeProperty('opacity');
+    });
+}
+
+window.__slimCleanOldVertical=__slimCleanOldVertical;
+
+function __slimApplyVerticalGroup(group){
+    if(!group)return;
+    var slots=__slimDirectMediaSlots(group);
+    if(slots.length<2)return;
+
+    group.setAttribute('data-slim-vertical-group','1');
+    group.style.setProperty('display','flex','important');
+    group.style.setProperty('flex-direction','column','important');
+    group.style.setProperty('flex-wrap','nowrap','important');
+    group.style.setProperty('width','100%','important');
+    group.style.setProperty('max-width','100%','important');
+    group.style.setProperty('height','auto','important');
+    group.style.setProperty('grid-template-columns','1fr','important');
+    group.style.setProperty('grid-template-rows','none','important');
+    group.style.setProperty('overflow','visible','important');
+
+    slots.forEach(function(slot){
+        slot.setAttribute('data-slim-vertical-slot','1');
+        slot.style.setProperty('display','block','important');
+        slot.style.setProperty('width','100%','important');
+        slot.style.setProperty('max-width','100%','important');
+        slot.style.setProperty('height','auto','important');
+        slot.style.setProperty('min-width','0','important');
+        slot.style.setProperty('min-height','0','important');
+        slot.style.setProperty('float','none','important');
+        slot.style.setProperty('clear','both','important');
+        slot.style.setProperty('grid-column','1 / -1','important');
+        slot.style.setProperty('grid-row','auto','important');
+        slot.style.setProperty('flex','0 0 auto','important');
+        slot.style.setProperty('flex-basis','auto','important');
+        slot.style.setProperty('margin','0 0 6px 0','important');
+
+        var media=slot.querySelectorAll('img,video,[style*="background-image" i]');
+        for(var i=0;i<media.length;i++){
+            var m=media[i];
+            if(!__slimIsMedia(m))continue;
+            m.classList.add('slim-vertical-photo');
+            m.style.setProperty('display','block','important');
+            m.style.setProperty('width','100%','important');
+            m.style.setProperty('max-width','100%','important');
+            m.style.setProperty('height','auto','important');
+            if(m.tagName==='IMG'){
+                m.style.setProperty('object-fit','contain','important');
+                m.style.setProperty('object-position','center center','important');
+                m.style.setProperty('visibility','visible','important');
+                m.style.setProperty('opacity','1','important');
+            }
+        }
+    });
+}
+
+function __slimPhotoPass(){
+    if(!document.documentElement)return;
+    var media=document.querySelectorAll('img,video,[style*="background-image" i]');
+    var groups=[];
+    for(var i=0;i<media.length;i++){
+        if(!__slimIsMedia(media[i]))continue;
+        var g=__slimFindVerticalGroup(media[i]);
+        if(g&&groups.indexOf(g)<0)groups.push(g);
+    }
+    for(var j=0;j<groups.length;j++)__slimApplyVerticalGroup(groups[j]);
+}
+
+__slimPhotoPass();
+
+if(!window.__slimVerticalPhotoObserver){
+    window.__slimVerticalPhotoObserver=new MutationObserver(function(){
+        clearTimeout(window.__slimVerticalPhotoTimer);
+        window.__slimVerticalPhotoTimer=setTimeout(__slimPhotoPass,180);
+    });
+    window.__slimVerticalPhotoObserver.observe(document.documentElement,{childList:true,subtree:true});
+}
+
+window.addEventListener('load',__slimPhotoPass);
+window.addEventListener('resize',__slimPhotoPass);
+if(window.__slimVerticalPhotoTimerInterval)clearInterval(window.__slimVerticalPhotoTimerInterval);
+window.__slimVerticalPhotoTimerInterval=setInterval(__slimPhotoPass,1200);
+}""")
+            js.append("s+='html,body{max-width:100%!important;overflow-x:hidden!important;} .slim-vertical-photo-group{} .slim-vertical-photo-group img.slim-vertical-photo,.slim-vertical-photo-group video.slim-vertical-photo{box-sizing:border-box!important;display:block!important;width:100%!important;max-width:100%!important;height:auto!important;object-fit:contain!important;}';")
         } else {
             // Remove any previous mode injected into the current SPA document when the
             // user switches the setting OFF.
-            js.append("if(window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver.disconnect();window.__slimVerticalPhotoObserver=null;}document.querySelectorAll('.slim-vertical-photo-group').forEach(function(e){e.classList.remove('slim-vertical-photo-group');});document.querySelectorAll('.slim-vertical-photo').forEach(function(e){e.classList.remove('slim-vertical-photo');});")
+            js.append("if(window.__slimVerticalPhotoObserver){window.__slimVerticalPhotoObserver.disconnect();window.__slimVerticalPhotoObserver=null;}if(window.__slimVerticalPhotoTimerInterval){clearInterval(window.__slimVerticalPhotoTimerInterval);window.__slimVerticalPhotoTimerInterval=null;}if(window.__slimCleanOldVertical){try{window.__slimCleanOldVertical();}catch(e){}}window.__slimVerticalPhotos=false;")
         }
         val keywords = getKeywordList()
         val kwJson = "[" + keywords.joinToString(",") { JSONObject.quote(it) } + "]"

@@ -253,6 +253,7 @@ class MainActivity : Activity() {
 
         homeBtn = Button(this).apply {
             text = "🏠"
+            textSize = 20f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.TRANSPARENT)
             setOnClickListener { clearRestrictedSession(); web.loadUrl(getHomeUrl()) }
@@ -873,15 +874,21 @@ class MainActivity : Activity() {
         js.append("function __slimScanButtonWords(){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return;var els=document.querySelectorAll('a,button,div[role=\\\"button\\\"],span[role=\\\"button\\\"],div[role=\\\"link\\\"],span[role=\\\"link\\\"]');for(var i=0;i<els.length;i++){var el=els[i];if(el.__slimBtnHidden)continue;var txt=(el.textContent||'').trim();if(txt.length>0&&txt.length<40&&__slimBtnMatch(txt)){el.style.setProperty('display','none','important');el.style.setProperty('pointer-events','none','important');el.__slimBtnHidden=true;}}}")
         js.append("if(!window.__slimBtnGuard){window.__slimBtnGuard=true;var __slimBtnTimer=null;new MutationObserver(function(){clearTimeout(__slimBtnTimer);__slimBtnTimer=setTimeout(__slimScanButtonWords,300);}).observe(document.body,{childList:true,subtree:true,characterData:true});document.addEventListener('click',function(e){if(!window.__slimButtonWords||!window.__slimButtonWords.length)return;var el=e.target;for(var d=0;d<4&&el;d++){var txt=(el.textContent||'').trim();if(txt.length>0&&txt.length<40&&__slimBtnMatch(txt)){e.preventDefault();e.stopPropagation();el.style.setProperty('display','none','important');el.__slimBtnHidden=true;return;}el=el.parentElement;}},true);}")
         js.append("__slimScanButtonWords();")
+        js.append("window.__slimAutoExpand=").append(prefs.getBoolean("auto_expand_seemore", false)).append(";")
+        js.append("function __slimIsSeeMore(el){if(!el)return false;var t=__slimNormalizeAr((el.textContent||'').trim());return t.length<40&&(t==='see more'||t.indexOf('see more')!==-1||t.indexOf('عرض المزيد')!==-1||t.indexOf('قراءه المزيد')!==-1||t.indexOf('المزيد')!==-1);}")
+        js.append("function __slimExpandSeeMore(){if(!window.__slimAutoExpand)return;var els=document.querySelectorAll('div[role=\\\"button\\\"],span[role=\\\"button\\\"],a[role=\\\"link\\\"],a,button');for(var i=0;i<els.length;i++){var el=els[i];if(el.__slimExpanded)continue;if(__slimIsSeeMore(el)){el.__slimExpanded=true;el.style.setProperty('pointer-events','auto','important');el.style.setProperty('visibility','visible','important');try{el.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,cancelable:true}));el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));el.click();el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true}));}catch(e){try{el.click();}catch(e2){}}}}}")
+        js.append("if(!window.__slimExpandGuard){window.__slimExpandGuard=true;var __slimExpTimer=null;new MutationObserver(function(){clearTimeout(__slimExpTimer);__slimExpTimer=setTimeout(__slimExpandSeeMore,250);}).observe(document.body,{childList:true,subtree:true,characterData:true});}")
+        js.append("__slimExpandSeeMore();")
         js.append("window.__slimBlockCopy=").append(prefs.getBoolean("block_copy", false)).append(";")
         js.append("if(!window.__slimCopyGuard){window.__slimCopyGuard=true;['copy','cut','contextmenu'].forEach(function(evt){document.addEventListener(evt,function(e){if(window.__slimBlockCopy){e.preventDefault();e.stopPropagation();}},true);});}")
         if (restrictedCustomPageUrl != null) {
             // MEDIA-ONLY SANDBOX: every click that could navigate is blocked first.
             // The ONLY exception is an explicitly detected image/video link that the
-            // native bridge approves. This prevents Facebook's SPA router from turning
-            // a media exception into permission to visit profiles, pages, groups, posts,
-            // search, reels, or any other destination.
-            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;function __slimMediaType(h){try{var u=new URL(h,location.href),p=(u.pathname||'').toLowerCase(),q=(u.search||'').toLowerCase(),x=u.href.toLowerCase();if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/permalink.php')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1||q.indexOf('set=a.')!==-1)return 'image';if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)return 'video';if((u.hostname||'').toLowerCase().indexOf('fbcdn.net')!==-1){if(/\.(mp4|webm|mov|m3u8)(?:[?#]|$)/i.test(x))return 'video';if(/\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)/i.test(x))return 'image';}return null;}catch(x){return null;}}function __slimElementAt(e){var t=e&&e.target;if(t&&t.nodeType===3)t=t.parentElement;if(t&&t.closest)return t;var x=0,y=0;try{if(e.touches&&e.touches.length){x=e.touches[0].clientX;y=e.touches[0].clientY;}else{x=e.clientX||0;y=e.clientY||0;}}catch(_){ }try{var z=document.elementFromPoint(x,y);if(z)return z;}catch(_){ }return t;}function __slimMediaElement(e){var t=__slimElementAt(e);if(!t)return null;var v=t.closest?t.closest('video'):null;if(v)return {type:'video',url:v.currentSrc||v.src||''};var img=t.closest?t.closest('img'):null;if(img)return {type:'image',url:img.currentSrc||img.src||img.getAttribute('src')||''};return null;}function __slimOpenMedia(e){var m=__slimMediaElement(e);if(!m||!m.url||!window.SlimBridge)return false;try{if(m.type==='image'){return !!SlimBridge.openRestrictedImage(m.url,location.href);}return !!SlimBridge.openMedia(m.type,m.url,location.href);}catch(x){return false;}}function __slimHandle(e){var m=__slimMediaElement(e);if(m&&m.url&&__slimOpenMedia(e)){e.preventDefault();e.stopImmediatePropagation();return true;}var t=__slimElementAt(e);var a=t&&t.closest?t.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;var h=a?(a.href||''):'';if(h){var type=__slimMediaType(h);if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href)){e.preventDefault();e.stopImmediatePropagation();return true;}}catch(x){}}e.preventDefault();e.stopImmediatePropagation();try{SlimBridge.checkNav(h);}catch(x){}return true;}return false;}['pointerdown','touchend','click'].forEach(function(evt){document.addEventListener(evt,function(e){__slimHandle(e);},true);});}""")
+            // native bridge approves, OR — independently of any block setting — a
+            // "See more" text-expand control when auto-expand is enabled: expanding
+            // truncated post text never navigates anywhere, so it is always let through
+            // even on a restricted/blocked link, group, or page.
+            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;function __slimMediaType(h){try{var u=new URL(h,location.href),p=(u.pathname||'').toLowerCase(),q=(u.search||'').toLowerCase(),x=u.href.toLowerCase();if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/permalink.php')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1||q.indexOf('set=a.')!==-1)return 'image';if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)return 'video';if((u.hostname||'').toLowerCase().indexOf('fbcdn.net')!==-1){if(/\.(mp4|webm|mov|m3u8)(?:[?#]|$)/i.test(x))return 'video';if(/\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)/i.test(x))return 'image';}return null;}catch(x){return null;}}function __slimElementAt(e){var t=e&&e.target;if(t&&t.nodeType===3)t=t.parentElement;if(t&&t.closest)return t;var x=0,y=0;try{if(e.touches&&e.touches.length){x=e.touches[0].clientX;y=e.touches[0].clientY;}else{x=e.clientX||0;y=e.clientY||0;}}catch(_){ }try{var z=document.elementFromPoint(x,y);if(z)return z;}catch(_){ }return t;}function __slimMediaElement(e){var t=__slimElementAt(e);if(!t)return null;var v=t.closest?t.closest('video'):null;if(v)return {type:'video',url:v.currentSrc||v.src||''};var img=t.closest?t.closest('img'):null;if(img)return {type:'image',url:img.currentSrc||img.src||img.getAttribute('src')||''};return null;}function __slimOpenMedia(e){var m=__slimMediaElement(e);if(!m||!m.url||!window.SlimBridge)return false;try{if(m.type==='image'){return !!SlimBridge.openRestrictedImage(m.url,location.href);}return !!SlimBridge.openMedia(m.type,m.url,location.href);}catch(x){return false;}}function __slimHandle(e){var t0=__slimElementAt(e);if(window.__slimAutoExpand&&t0&&t0.closest){var sm=t0.closest('div[role=\"button\"],span[role=\"button\"],a[role=\"link\"],a,button');if(sm&&__slimIsSeeMore(sm))return false;}var m=__slimMediaElement(e);if(m&&m.url&&__slimOpenMedia(e)){e.preventDefault();e.stopImmediatePropagation();return true;}var t=__slimElementAt(e);var a=t&&t.closest?t.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;var h=a?(a.href||''):'';if(h){var type=__slimMediaType(h);if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href)){e.preventDefault();e.stopImmediatePropagation();return true;}}catch(x){}}e.preventDefault();e.stopImmediatePropagation();try{SlimBridge.checkNav(h);}catch(x){}return true;}return false;}['pointerdown','touchend','click'].forEach(function(evt){document.addEventListener(evt,function(e){__slimHandle(e);},true);});}""")
         }
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)
@@ -913,13 +920,31 @@ class MainActivity : Activity() {
         }
         box.addView(title)
 
+        val counterRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 14)
+        }
         val counter = TextView(this).apply {
             text = "المحاولات المحظورة: ${prefs.getInt("blocked_count", 0)}"
             textSize = 13f
             setTextColor(Color.GRAY)
-            setPadding(0, 0, 0, 14)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        box.addView(counter)
+        val resetCounter = Button(this).apply { text = "تصفير" }
+        resetCounter.setOnClickListener {
+            AlertDialog.Builder(this).setTitle("تصفير العداد")
+                .setMessage("سيتم تصفير عدد المحاولات المحظورة إلى صفر. متابعة؟")
+                .setPositiveButton("نعم") { _, _ ->
+                    prefs.edit().putInt("blocked_count", 0).apply()
+                    counter.text = "المحاولات المحظورة: 0"
+                    notifyUser("تم تصفير العداد")
+                }
+                .setNegativeButton("إلغاء", null).show()
+        }
+        counterRow.addView(counter)
+        counterRow.addView(resetCounter)
+        box.addView(counterRow)
 
         // Collapsible sections keep the main settings screen short and readable.
         fun section(titleText: String, icon: String, open: Boolean = false): LinearLayout {
@@ -1128,6 +1153,7 @@ class MainActivity : Activity() {
         }
         usage.addView(startInput); usage.addView(endInput)
         addSwitch(usage, "silent_notifications", "الوضع الصامت: إخفاء رسائل الحظر والتنبيهات", refresh = false)
+        addSwitch(usage, "auto_expand_seemore", "توسيع منشورات \"عرض المزيد\" تلقائيًا")
 
         val privacy = section("الخصوصية والحماية", "🔐")
         addSwitch(privacy, "block_copy", "منع نسخ النصوص من الصفحة")
@@ -1163,6 +1189,17 @@ class MainActivity : Activity() {
                 }.setNegativeButton("إلغاء", null).show()
         }
         privacy.addView(changePwd)
+        val removePwd = Button(this).apply { text = "🔓 إلغاء حماية الإعدادات" }
+        removePwd.setOnClickListener {
+            AlertDialog.Builder(this).setTitle("إلغاء حماية الإعدادات")
+                .setMessage("سيتم حذف رمز PIN وستفتح الإعدادات بدون طلب كلمة مرور في المرة القادمة. هل تريد المتابعة؟")
+                .setPositiveButton("نعم، إلغاء الحماية") { _, _ ->
+                    prefs.edit().remove("app_password").apply()
+                    notifyUser("تم إلغاء حماية الإعدادات")
+                }
+                .setNegativeButton("إلغاء", null).show()
+        }
+        privacy.addView(removePwd)
 
         val rules = section("JavaScript / CSS", "🧩")
         rules.addView(TextView(this).apply {

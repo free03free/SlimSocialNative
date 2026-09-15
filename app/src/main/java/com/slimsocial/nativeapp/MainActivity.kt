@@ -1099,7 +1099,12 @@ class MainActivity : Activity() {
 
     private fun updateZoomWidgetVisibility() {
         if (!::zoomWidget.isInitialized) return
-        zoomWidget.visibility = if (prefs.getBoolean("zoom_enabled", false)) View.VISIBLE else View.GONE
+        // "zoom_enabled" alone controls whether pinch-zoom is unlocked (see applyPageZoom,
+        // which rewrites the viewport meta tag). "zoom_widget_hidden" only controls whether
+        // the floating +/-/% pill is drawn on top of it. The two are independent: a user can
+        // keep pinch-zoom working while hiding the floating button.
+        val shouldShow = prefs.getBoolean("zoom_enabled", false) && !prefs.getBoolean("zoom_widget_hidden", false)
+        zoomWidget.visibility = if (shouldShow) View.VISIBLE else View.GONE
     }
 
     // Small draggable floating pill: drag by the ⠿ handle, tap +/－ to zoom, tap the
@@ -1350,7 +1355,21 @@ class MainActivity : Activity() {
         }
         zoomSection.addView(swZoom)
         zoomSection.addView(TextView(this).apply {
-            text = "عند التفعيل تظهر أداة عائمة صغيرة (＋ / － / النسبة) فوق الصفحة، يمكن سحبها من علامة ⠿ لأي مكان على الشاشة. الضغط على النسبة يعيد التكبير إلى 100%. هذا التكبير يعمل حتى لو كانت صفحة فيسبوك نفسها تمنع تكبير الشاشة بلمستين."
+            text = "عند التفعيل يتم فتح إمكانية التكبير بلمستين (pinch-to-zoom) حتى لو كانت صفحة فيسبوك نفسها تمنعه، وتظهر أداة عائمة صغيرة (＋ / － / النسبة) فوق الصفحة، يمكن سحبها من علامة ⠿ لأي مكان على الشاشة. الضغط على النسبة يعيد التكبير إلى 100%."
+            setTextColor(Color.GRAY); textSize = 12f; setPadding(4, 0, 4, 8)
+        })
+        val swHideZoomWidget = Switch(this).apply {
+            text = "إخفاء الزر العائم (مع إبقاء التكبير بالأصابع يعمل)"
+            isChecked = prefs.getBoolean("zoom_widget_hidden", false)
+            setPadding(4, 8, 4, 8)
+        }
+        swHideZoomWidget.setOnCheckedChangeListener { _, value ->
+            prefs.edit().putBoolean("zoom_widget_hidden", value).apply()
+            updateZoomWidgetVisibility()
+        }
+        zoomSection.addView(swHideZoomWidget)
+        zoomSection.addView(TextView(this).apply {
+            text = "يخفي فقط الأداة العائمة (＋ / － / النسبة) من فوق الشاشة. التكبير بلمستين يبقى يعمل طالما المفتاح الأول أعلاه مفعّل."
             setTextColor(Color.GRAY); textSize = 12f; setPadding(4, 0, 4, 8)
         })
         val zoomRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }

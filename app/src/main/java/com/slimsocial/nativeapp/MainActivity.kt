@@ -1004,7 +1004,7 @@ class MainActivity : Activity() {
             parent.addView(sw)
         }
 
-        val basic = section("الحظر الأساسي", "🛡️", true)
+        val basic = section("الحظر الأساسي", "🛡️", false)
         blocks.forEach { name ->
             val sw = Switch(this).apply {
                 text = arabicLabels[name] ?: name

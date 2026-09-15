@@ -189,6 +189,15 @@ class MainActivity : Activity() {
                     blockedPageBaseUrl = normalizeUrl(url)
                     blockedNavigationUrl = null
                 }
+                if (restrictedCustomPageUrl != null) {
+                    // Freeze the page instantly, before a single pixel paints, so no tap can
+                    // land on a real link/profile while the page is still loading. This closes
+                    // the "visit then bounce back" gap: previously the click-guard was only
+                    // installed in applyControls() at onPageFinished, leaving the entire load
+                    // window unprotected. The full media-aware guard lifts this the moment it's
+                    // ready (see applyControls()).
+                    applyInstantLock()
+                }
                 if (handleNavigation(url)) {
                     v.stopLoading()
                     val generation = blockedNavigationGeneration
@@ -809,10 +818,51 @@ class MainActivity : Activity() {
         }
     }
 
+    // Called from onPageStarted the instant a restricted page begins loading — i.e.
+    // before document.head, body, or any real content exists yet. Uses
+    // document.documentElement (always present) so the <style> attaches immediately,
+    // and blanket-blocks every pointer event at the capture phase so nothing can slip
+    // through during the load window. This is intentionally crude (blocks everything,
+    // including images) because the fine-grained, media-aware guard isn't ready until
+    // applyControls() runs at onPageFinished — which also lifts this lock.
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun applyInstantLock() {
+        if (!web.settings.javaScriptEnabled) return
+        val js = """
+            (function(){
+              window.__slimInstantLockActive = true;
+              if (!window.__slimInstantLockInit) {
+                window.__slimInstantLockInit = true;
+                var st = document.createElement('style');
+                st.id = 'slimstyle-instant-lock';
+                st.textContent = 'html *{pointer-events:none!important;}';
+                (document.head || document.documentElement).appendChild(st);
+                function __slimBlockAll(e){
+                  if (window.__slimInstantLockActive) { e.preventDefault(); e.stopImmediatePropagation(); }
+                }
+                document.addEventListener('click', __slimBlockAll, true);
+                document.addEventListener('pointerdown', __slimBlockAll, true);
+                document.addEventListener('touchend', __slimBlockAll, true);
+              } else if (!document.getElementById('slimstyle-instant-lock')) {
+                var st2 = document.createElement('style');
+                st2.id = 'slimstyle-instant-lock';
+                st2.textContent = 'html *{pointer-events:none!important;}';
+                (document.head || document.documentElement).appendChild(st2);
+              }
+            })();
+        """.trimIndent()
+        web.evaluateJavascript(js, null)
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun applyControls() {
         if (!web.settings.javaScriptEnabled) return
         val js = StringBuilder("(function(){var s='';")
+        if (restrictedCustomPageUrl != null) {
+            // The real, media-aware guard below is now ready — lift the blanket instant
+            // lock so images/video (per settings) become interactive again.
+            js.append("window.__slimInstantLockActive=false;var __slimInst=document.getElementById('slimstyle-instant-lock');if(__slimInst&&__slimInst.parentNode)__slimInst.parentNode.removeChild(__slimInst);")
+        }
         val blockAllButtons = prefs.getBoolean("All buttons",false)
         if (blockAllButtons) js.append("s+='button,[role=\\\"button\\\"],input[type=button],input[type=submit]{visibility:hidden!important;pointer-events:none!important;}';")
         val map = mapOf("Like / Reactions" to "a[href*='/reaction/'],a[href*='/ufi/reaction'],[aria-label='Like' i],[aria-label='React' i]", "Comments" to "a[href*='comment'],[aria-label*='Comment' i]", "Share" to "a[href*='share'],[aria-label*='Share' i]", "Search" to "a[href*='search'],input[placeholder*='Search' i]", "Messenger" to "a[href*='messages'],a[href*='messenger']", "Stories" to "a[href*='stories']", "Reels / Watch" to "a[href*='reel'],a[href*='watch']", "Marketplace" to "a[href*='marketplace']", "Follow / Friends" to "a[href*='/friends/'],a[href*='add_friend'],a[href*='subscribe'],a[href*='unsubscribe'],[aria-label='Follow' i],[aria-label='Add Friend' i],[aria-label*='Follow' i],[aria-label*='متابعة'],[aria-label*='إضافة صديق']")
@@ -907,7 +957,7 @@ class MainActivity : Activity() {
             // "See more" text-expand control when auto-expand is enabled: expanding
             // truncated post text never navigates anywhere, so it is always let through
             // even on a restricted/blocked link, group, or page.
-            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;function __slimMediaType(h){try{var u=new URL(h,location.href),p=(u.pathname||'').toLowerCase(),q=(u.search||'').toLowerCase(),x=u.href.toLowerCase();if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/permalink.php')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1||q.indexOf('set=a.')!==-1)return 'image';if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)return 'video';if((u.hostname||'').toLowerCase().indexOf('fbcdn.net')!==-1){if(/\.(mp4|webm|mov|m3u8)(?:[?#]|$)/i.test(x))return 'video';if(/\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)/i.test(x))return 'image';}return null;}catch(x){return null;}}function __slimElementAt(e){var t=e&&e.target;if(t&&t.nodeType===3)t=t.parentElement;if(t&&t.closest)return t;var x=0,y=0;try{if(e.touches&&e.touches.length){x=e.touches[0].clientX;y=e.touches[0].clientY;}else{x=e.clientX||0;y=e.clientY||0;}}catch(_){ }try{var z=document.elementFromPoint(x,y);if(z)return z;}catch(_){ }return t;}function __slimMediaElement(e){var t=__slimElementAt(e);if(!t)return null;var v=t.closest?t.closest('video'):null;if(v)return {type:'video',url:v.currentSrc||v.src||''};var img=t.closest?t.closest('img'):null;if(img)return {type:'image',url:img.currentSrc||img.src||img.getAttribute('src')||''};return null;}function __slimOpenMedia(e){var m=__slimMediaElement(e);if(!m||!m.url||!window.SlimBridge)return false;try{if(m.type==='image'){return !!SlimBridge.openRestrictedImage(m.url,location.href);}return !!SlimBridge.openMedia(m.type,m.url,location.href);}catch(x){return false;}}function __slimHandle(e){var t0=__slimElementAt(e);if(window.__slimAutoExpand&&__slimIsSeeMore(t0))return false;var m=__slimMediaElement(e);if(m&&m.url&&__slimOpenMedia(e)){e.preventDefault();e.stopImmediatePropagation();return true;}var t=__slimElementAt(e);var a=t&&t.closest?t.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;var h=a?(a.href||''):'';if(h){var type=__slimMediaType(h);if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href)){e.preventDefault();e.stopImmediatePropagation();return true;}}catch(x){}}e.preventDefault();e.stopImmediatePropagation();try{SlimBridge.checkNav(h);}catch(x){}return true;}return false;}['pointerdown','touchend','click'].forEach(function(evt){document.addEventListener(evt,function(e){__slimHandle(e);},true);});}""")
+            js.append("""if(!window.__slimRestrictedMediaGuard){window.__slimRestrictedMediaGuard=true;function __slimMediaType(h){try{var u=new URL(h,location.href),p=(u.pathname||'').toLowerCase(),q=(u.search||'').toLowerCase(),x=u.href.toLowerCase();if(p==='/photo.php'||p.indexOf('/photo/')===0||p.indexOf('/photos/')===0||p.indexOf('/permalink.php')===0||q.indexOf('fbid=')!==-1||q.indexOf('photo_id=')!==-1||q.indexOf('set=a.')!==-1)return 'image';if(p.indexOf('/videos/')===0||p==='/video.php'||p.indexOf('/video/')===0||p.indexOf('/reel/')===0||p==='/watch'||p.indexOf('/watch/')===0||q.indexOf('v=')!==-1||q.indexOf('video_id=')!==-1)return 'video';if((u.hostname||'').toLowerCase().indexOf('fbcdn.net')!==-1){if(/\.(mp4|webm|mov|m3u8)(?:[?#]|$)/i.test(x))return 'video';if(/\.(jpg|jpeg|png|webp|gif)(?:[?#]|$)/i.test(x))return 'image';}return null;}catch(x){return null;}}function __slimElementAt(e){var t=e&&e.target;if(t&&t.nodeType===3)t=t.parentElement;if(t&&t.closest)return t;var x=0,y=0;try{if(e.touches&&e.touches.length){x=e.touches[0].clientX;y=e.touches[0].clientY;}else{x=e.clientX||0;y=e.clientY||0;}}catch(_){ }try{var z=document.elementFromPoint(x,y);if(z)return z;}catch(_){ }return t;}function __slimMediaElement(e){var t=__slimElementAt(e);if(!t)return null;var v=t.closest?t.closest('video'):null;if(v)return {type:'video',url:v.currentSrc||v.src||''};var img=t.closest?t.closest('img'):null;if(img)return {type:'image',url:img.currentSrc||img.src||img.getAttribute('src')||''};return null;}function __slimOpenMedia(e){var m=__slimMediaElement(e);if(!m||!m.url||!window.SlimBridge)return false;try{if(m.type==='image'){return !!SlimBridge.openRestrictedImage(m.url,location.href);}return !!SlimBridge.openMedia(m.type,m.url,location.href);}catch(x){return false;}}function __slimHandle(e){var t0=__slimElementAt(e);if(window.__slimAutoExpand&&__slimIsSeeMore(t0))return false;var t=__slimElementAt(e);var a=t&&t.closest?t.closest('a[href],[role=\"link\"],[role=\"button\"]'):null;var h=a?(a.href||''):'';if(h){var type=__slimMediaType(h);if(type&&window.SlimBridge){try{if(SlimBridge.openMedia(type,h,location.href)){e.preventDefault();e.stopImmediatePropagation();return true;}}catch(x){}}e.preventDefault();e.stopImmediatePropagation();try{SlimBridge.checkNav(h);}catch(x){}return true;}var m=__slimMediaElement(e);if(m&&m.url&&__slimOpenMedia(e)){e.preventDefault();e.stopImmediatePropagation();return true;}return false;}['pointerdown','touchend','click'].forEach(function(evt){document.addEventListener(evt,function(e){__slimHandle(e);},true);});}""")
         }
         js.append("})();")
         web.evaluateJavascript(js.toString(),null)

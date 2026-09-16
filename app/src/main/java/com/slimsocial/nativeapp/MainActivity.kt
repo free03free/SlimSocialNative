@@ -2109,23 +2109,90 @@ val info = TextView(this).apply {
         refresh = {
             listBox.removeAllViews()
             val a = customRulesJson()
+            val currentUrl = web.url ?: ""
             if (a.length() == 0) {
                 listBox.addView(TextView(this).apply { text = "لا توجد قواعد بعد. اضغط + لإضافة أول قاعدة."; setPadding(0, 12, 0, 12) })
             } else {
                 for (i in 0 until a.length()) {
                     val o = a.optJSONObject(i) ?: continue
                     val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 6, 0, 6) }
-                    val ruleText = TextView(this).apply {
-                        text = "${if (o.optBoolean("enabled", true)) "✓" else "○"} ${o.optString("name", "بدون اسم")}\n${scopeLabel(o.optString("scope", "all"))} • أولوية ${o.optInt("priority", 0)}"
-                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    val isEnabled = o.optBoolean("enabled", true)
+                    val cssLen = o.optString("css", "").length
+                    val jsLen = o.optString("js", "").length
+                    val scope = o.optString("scope", "all")
+                    val ruleId = o.optString("id", "")
+                    val shortId = if (ruleId.length >= 6) ruleId.takeLast(6) else ruleId
+                    val liveMatch = try { customRuleMatches(o, currentUrl) } catch (_: Exception) { false }
+                    val matchLabel = when {
+                        currentUrl.isBlank() -> "— لا يوجد رابط حالي"
+                        liveMatch -> "✅ يطابق الصفحة الحالية"
+                        !isEnabled -> "○ معطّلة"
+                        else -> "❌ لا يطابق الصفحة الحالية"
                     }
+                    val urlDetail = if (scope == "url") " • رابط: ${o.optString("url", "").ifBlank { "(فارغ!)" }}" else ""
+                    val emptyWarning = if (cssLen == 0 && jsLen == 0) " ⚠️ فارغة (بلا CSS ولا JS)" else ""
+                    val ruleText = TextView(this).apply {
+                        text = "${if (isEnabled) "✓" else "○"} ${o.optString("name", "بدون اسم")} (#$shortId)$emptyWarning\n" +
+                            "${scopeLabel(scope)} • أولوية ${o.optInt("priority", 0)}$urlDetail\n" +
+                            "CSS: $cssLen حرف • JS: $jsLen حرف\n" +
+                            matchLabel
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        setPadding(0, 4, 8, 4)
+                    }
+                    val editCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
                     val edit = Button(this).apply { text = "تعديل" }
                     edit.setOnClickListener { editRule(o) { refresh() } }
-                    row.addView(ruleText); row.addView(edit); listBox.addView(row)
+                    editCol.addView(edit)
+                    row.addView(ruleText); row.addView(editCol); listBox.addView(row)
+                    if (i < a.length() - 1) {
+                        listBox.addView(View(this).apply {
+                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+                            setBackgroundColor(Color.LTGRAY)
+                        })
+                    }
                 }
             }
         }
         refresh()
+
+        val actionsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val refreshBtn = Button(this).apply { text = "🔄 تحديث القائمة" }
+        refreshBtn.setOnClickListener { refresh(); notifyUser("تم تحديث القائمة") }
+        val cleanupBtn = Button(this).apply { text = "🧹 تنظيف القواعد" }
+        cleanupBtn.setOnClickListener {
+            val a = customRulesJson()
+            val seen = mutableSetOf<String>()
+            val toKeep = org.json.JSONArray()
+            val removedNames = mutableListOf<String>()
+            for (i in 0 until a.length()) {
+                val o = a.optJSONObject(i) ?: continue
+                val css = o.optString("css", "").trim()
+                val js = o.optString("js", "").trim()
+                val name = o.optString("name", "بدون اسم")
+                if (css.isEmpty() && js.isEmpty()) { removedNames.add("$name (فارغة)"); continue }
+                val fingerprint = css + "\u0001" + js + "\u0001" + o.optString("scope", "all") + "\u0001" + o.optString("url", "")
+                if (seen.contains(fingerprint)) { removedNames.add("$name (مكررة)"); continue }
+                seen.add(fingerprint)
+                toKeep.put(o)
+            }
+            if (removedNames.isEmpty()) {
+                notifyUser("لا يوجد ما يُنظَّف — كل القواعد سليمة وفريدة")
+            } else {
+                AlertDialog.Builder(this)
+                    .setTitle("تأكيد التنظيف")
+                    .setMessage("سيتم حذف ${removedNames.size} قاعدة:\n\n" + removedNames.joinToString("\n"))
+                    .setNegativeButton("إلغاء", null)
+                    .setPositiveButton("حذف") { _, _ ->
+                        saveCustomRulesJson(toKeep)
+                        refresh()
+                        applyCustomRulesDelayed()
+                        notifyUser("تم حذف ${removedNames.size} قاعدة")
+                    }.show()
+            }
+        }
+        actionsRow.addView(refreshBtn); actionsRow.addView(cleanupBtn)
+        container.addView(actionsRow)
+
         val add = Button(this).apply { text = "＋ إضافة قاعدة جديدة" }
         add.setOnClickListener { editRule(null) { refresh() } }
         container.addView(add)

@@ -52,6 +52,9 @@ class MainActivity : Activity() {
     private var restrictedCustomPageUrl: String? = null
     private var pendingMediaOnlyExceptionUrl: String? = null
     @Volatile private var lastRuleEngineReport: String = "لم يتم الفحص بعد"
+    // وضع الالتقاط: عمدًا غير محفوظ بالـ prefs، يرجع false تلقائيًا عند إعادة فتح
+    // التطبيق حتى ما يفضلش شغّال بالخطأ. الحظر الفعلي (القواعد المحفوظة) دائم دائمًا.
+    @Volatile private var pickerModeActive = false
     private val usageHandler = Handler(Looper.getMainLooper())
     private var usageRunning = false
 
@@ -74,6 +77,11 @@ class MainActivity : Activity() {
                 lastRuleEngineReport = data
             }
         }, "SlimRuleBridge")
+        web.addJavascriptInterface(object {
+            @JavascriptInterface fun pick(dataJson: String) {
+                runOnUiThread { showPickerConfirmDialog(dataJson) }
+            }
+        }, "SlimPicker")
         web.settings.domStorageEnabled = true
         web.settings.userAgentString = WebSettings.getDefaultUserAgent(this).replace("; wv", "").replace("wv;", "")
         // Native pinch-zoom as an extra layer; the real guarantee that zoom works even
@@ -255,6 +263,7 @@ class MainActivity : Activity() {
             override fun onPageFinished(v: WebView, url: String) {
                 if (!isAuth(url)) {
                     applyControls(); applyCustomRulesDelayed()
+                    if (pickerModeActive) applyElementPicker(true)
                     if (restrictedCustomPageUrl != null && isMediaExceptionAllowed(url, "image")) {
                         installRestrictedImageTouchLayer()
                     }
@@ -1312,6 +1321,24 @@ class MainActivity : Activity() {
         }
         addSwitch(basic, "block_message_btn", "مراسلة (زر مراسلة الصفحات)")
 
+        val advanced = section("أدوات متقدمة", "🎯")
+        val swPicker = Switch(this).apply {
+            text = "تفعيل وضع الالتقاط (المس أي عنصر لحظره)"
+            isChecked = pickerModeActive
+            setPadding(4, 8, 4, 8)
+        }
+        swPicker.setOnCheckedChangeListener { _, value ->
+            pickerModeActive = value
+            if (!isAuth(web.url ?: "")) applyElementPicker(value)
+            notifyUser(if (value) "وضع الالتقاط مفعّل — المس أي عنصر" else "تم إيقاف وضع الالتقاط (المحظور يبقى محظورًا)")
+        }
+        advanced.addView(swPicker)
+        advanced.addView(TextView(this).apply {
+            text = "العناصر المحظورة بهذا الوضع تظهر لاحقًا بقائمة \"إدارة قواعد JS/CSS\" باسم يبدأ بـ 🎯"
+            setPadding(4, 0, 4, 8)
+            textSize = 12f
+        })
+
         val media = section("الصور والفيديو والوسائط", "🖼️")
         val swVerticalPhotos = Switch(this).apply {
             text = "عرض صور المنشورات عموديًا (صورة كاملة تحت صورة)"
@@ -1939,6 +1966,186 @@ class MainActivity : Activity() {
                 cb.setPrimaryClip(android.content.ClipData.newPlainText("SlimSocial JS/CSS Report", report))
                 notifyUser("تم نسخ التقرير. أرسله هنا")
             }.show()
+    }
+
+    // ========================================================================
+    // وضع الالتقاط (Element Picker) — يولّد قواعد عادية تُخزَّن بنفس نظام
+    // custom_rules_json الموجود أصلاً، فتبقى فعّالة دائمًا حتى بعد إيقاف الوضع.
+    // ========================================================================
+    private fun pickerActivateJs(): String = """
+        (function(){
+          if (window.__slimPickerActive) return;
+          window.__slimPickerActive = true;
+
+          var hl = document.createElement('div');
+          hl.id = 'slim-picker-highlight';
+          hl.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;'+
+            'border:3px solid #ff3b30;background:rgba(255,59,48,0.15);border-radius:4px;'+
+            'transition:all .05s linear;display:none;';
+          document.body.appendChild(hl);
+
+          var tip = document.createElement('div');
+          tip.id = 'slim-picker-tip';
+          tip.style.cssText = 'position:fixed;top:8px;left:8px;right:8px;z-index:2147483647;'+
+            'background:#111;color:#fff;padding:10px 14px;border-radius:8px;font-size:14px;'+
+            'text-align:center;font-family:sans-serif;direction:rtl;';
+          tip.textContent = '🎯 وضع الالتقاط: المس أي زر/صورة/رابط لحظره';
+          document.body.appendChild(tip);
+
+          function showHL(el){
+            if(!el){ hl.style.display='none'; return; }
+            var r = el.getBoundingClientRect();
+            hl.style.display='block';
+            hl.style.left=r.left+'px'; hl.style.top=r.top+'px';
+            hl.style.width=r.width+'px'; hl.style.height=r.height+'px';
+          }
+
+          window.__slimPickerMove = function(e){
+            var t = document.elementFromPoint(
+              (e.touches?e.touches[0].clientX:e.clientX),
+              (e.touches?e.touches[0].clientY:e.clientY)
+            );
+            showHL(t);
+          };
+
+          function buildInfo(el){
+            var out = {tag: el.tagName, kind:'tag'};
+            var cur = el, depth = 0;
+            while (cur && depth < 5) {
+              var a2 = cur.getAttribute && cur.getAttribute('aria-label');
+              if (a2) { out.kind='aria'; out.value=a2; out.label=a2; return out; }
+              if (cur.tagName === 'A') {
+                var href = cur.getAttribute('href') || '';
+                var m = href.match(/profile\.php\?id=(\d+)/);
+                if (m) { out.kind='profile-id'; out.value=m[1]; out.label='بروفايل #'+m[1]; return out; }
+                var m2 = href.match(/^\/?([A-Za-z0-9_.\-]{2,})\/?(\?|${'$'})/);
+                if (m2 && !/^(groups|watch|reel|photo|posts|permalink|marketplace|events)${'$'}/i.test(m2[1])) {
+                  out.kind='profile-slug'; out.value=m2[1]; out.label='بروفايل/صفحة: '+m2[1]; return out;
+                }
+              }
+              cur = cur.parentElement; depth++;
+            }
+            var txt = (el.textContent||'').trim().replace(/\s+/g,' ').slice(0,40);
+            if (txt) { out.kind='text'; out.value=txt; out.label=txt; return out; }
+            out.label = el.tagName;
+            return out;
+          }
+
+          window.__slimPickerTap = function(e){
+            var x = e.touches ? e.touches[0].clientX : e.clientX;
+            var y = e.touches ? e.touches[0].clientY : e.clientY;
+            var el = document.elementFromPoint(x, y);
+            if (!el || el === hl || el === tip || tip.contains(el)) return;
+            e.preventDefault(); e.stopPropagation();
+            var info = buildInfo(el);
+            if (window.SlimPicker) window.SlimPicker.pick(JSON.stringify(info));
+          };
+
+          document.addEventListener('pointermove', window.__slimPickerMove, true);
+          document.addEventListener('pointerdown', window.__slimPickerTap, true);
+          document.addEventListener('click', window.__slimPickerTap, true);
+        })();
+    """.trimIndent()
+
+    private fun pickerDeactivateJs(): String = """
+        (function(){
+          window.__slimPickerActive = false;
+          if (window.__slimPickerMove) document.removeEventListener('pointermove', window.__slimPickerMove, true);
+          if (window.__slimPickerTap) {
+            document.removeEventListener('pointerdown', window.__slimPickerTap, true);
+            document.removeEventListener('click', window.__slimPickerTap, true);
+          }
+          var hl = document.getElementById('slim-picker-highlight'); if (hl) hl.remove();
+          var tip = document.getElementById('slim-picker-tip'); if (tip) tip.remove();
+        })();
+    """.trimIndent()
+
+    private fun applyElementPicker(activate: Boolean) {
+        if (!web.settings.javaScriptEnabled) return
+        web.evaluateJavascript(if (activate) pickerActivateJs() else pickerDeactivateJs(), null)
+    }
+
+    private fun showPickerConfirmDialog(dataJson: String) {
+        val info = try { JSONObject(dataJson) } catch (_: Exception) { return }
+        val kind = info.optString("kind", "tag")
+        val value = info.optString("value", "")
+        val label = info.optString("label", info.optString("tag", "عنصر"))
+
+        val message = when (kind) {
+            "aria" -> "سيتم حظر كل عنصر بهذا الوصف بالضبط:\n\"$value\"\n(يشمل كل مكان يظهر فيه بنفس الاسم عبر فيسبوك)"
+            "profile-id", "profile-slug" -> "سيتم حظر كل رابط/عنصر يشير إلى هذا الحساب:\n\"$value\"\n(يخفي الروابط والصور المرتبطة به في كل الصفحات)"
+            "text" -> "سيتم حظر كل عنصر نصه مطابق تمامًا لـ:\n\"$value\""
+            else -> "هذا العنصر ما عنده وصف أو رابط ثابت يمكن الاعتماد عليه، الحظر هنا أقل دقة وقد يتوقف عن العمل إذا غيّر فيسبوك تصميم الصفحة."
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("حظر: $label")
+            .setMessage(message)
+            .setNegativeButton("إلغاء") { _, _ -> if (pickerModeActive) applyElementPicker(true) }
+            .setPositiveButton("حظر") { _, _ ->
+                saveElementBlockRule(kind, value, label)
+                if (pickerModeActive) applyElementPicker(true)
+            }
+            .show()
+    }
+
+    private fun saveElementBlockRule(kind: String, value: String, label: String) {
+        val css: String
+        val js: String
+        when (kind) {
+            "aria" -> {
+                val escaped = value.replace("\\", "\\\\").replace("\"", "\\\"")
+                css = "[aria-label=\"$escaped\"]{display:none!important;}"
+                js = ""
+            }
+            "profile-id" -> {
+                css = "a[href*=\"profile.php?id=$value\"]{display:none!important;}"
+                js = ""
+            }
+            "profile-slug" -> {
+                val safe = value.replace("\"", "")
+                css = "a[href*=\"/$safe\"]{display:none!important;}"
+                js = ""
+            }
+            "text" -> {
+                val qtext = JSONObject.quote(value)
+                val safeKey = value.hashCode().toString().replace("-", "n")
+                css = ""
+                js = """
+                    (function(){
+                      if(window.__slimTextBlock_$safeKey) return;
+                      function pass(){
+                        document.querySelectorAll('[role="button"],button,a,span,div').forEach(function(e){
+                          if((e.textContent||'').trim()===$qtext){ e.style.setProperty('display','none','important'); }
+                        });
+                      }
+                      pass();
+                      var obs=new MutationObserver(function(){pass();});
+                      obs.observe(document.body,{childList:true,subtree:true});
+                      window.__slimTextBlock_$safeKey = true;
+                    })();
+                """.trimIndent()
+            }
+            else -> { css = ""; js = "" }
+        }
+        if (css.isBlank() && js.isBlank()) { notifyUser("تعذّر تحديد قاعدة موثوقة لهذا العنصر"); return }
+
+        val o = JSONObject()
+        o.put("id", UUID.randomUUID().toString())
+        o.put("name", "🎯 محظور: $label")
+        o.put("enabled", true)
+        o.put("scope", "all")
+        o.put("url", "")
+        o.put("priority", 0)
+        o.put("css", css)
+        o.put("js", js)
+
+        val a = customRulesJson()
+        a.put(o)
+        saveCustomRulesJson(a)
+        prefs.edit().putBoolean("custom_rules_migrated", true).apply()
+        applyCustomRulesDelayed()
+        notifyUser("تم حظر \"$label\" بشكل دائم")
     }
 
     private fun applyCustomRulesDelayed() {

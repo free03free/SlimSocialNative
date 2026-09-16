@@ -2021,128 +2021,131 @@ class MainActivity : Activity() {
           tip.style.cssText = 'position:fixed;top:8px;left:8px;right:8px;z-index:2147483647;'+
             'background:#111;color:#fff;padding:10px 14px;border-radius:8px;font-size:14px;'+
             'text-align:center;font-family:sans-serif;direction:rtl;';
-          tip.textContent = 'وضع الالتقاط: المس العنصر ثم اختر المحددات والعناصر المجاورة';
+          tip.textContent = '🎯 وضع الالتقاط: المس أي زر/صورة/رابط لحظره';
           document.body.appendChild(tip);
 
           function showHL(el){
-            if(!el){hl.style.display='none';return;}
-            var r=el.getBoundingClientRect();
-            hl.style.display='block';hl.style.left=r.left+'px';hl.style.top=r.top+'px';
-            hl.style.width=r.width+'px';hl.style.height=r.height+'px';
+            if(!el){ hl.style.display='none'; return; }
+            var r = el.getBoundingClientRect();
+            hl.style.display='block';
+            hl.style.left=r.left+'px'; hl.style.top=r.top+'px';
+            hl.style.width=r.width+'px'; hl.style.height=r.height+'px';
           }
-          function pointXY(e){
-            if(e.touches&&e.touches.length)return{x:e.touches[0].clientX,y:e.touches[0].clientY};
-            if(e.changedTouches&&e.changedTouches.length)return{x:e.changedTouches[0].clientX,y:e.changedTouches[0].clientY};
-            return{x:e.clientX,y:e.clientY};
-          }
-          window.__slimPickerMove=function(e){var p=pointXY(e);showHL(document.elementFromPoint(p.x,p.y));};
 
-          var __slimDownX=0,__slimDownY=0,__slimMoved=false;
-          window.__slimPickerDown=function(e){var p=pointXY(e);__slimDownX=p.x;__slimDownY=p.y;__slimMoved=false;};
-          window.__slimPickerTrack=function(e){
-            window.__slimPickerMove(e);var p=pointXY(e);
-            if(Math.abs(p.x-__slimDownX)>10||Math.abs(p.y-__slimDownY)>10)__slimMoved=true;
+          function pointXY(e){
+            if (e.touches && e.touches.length) return {x:e.touches[0].clientX, y:e.touches[0].clientY};
+            if (e.changedTouches && e.changedTouches.length) return {x:e.changedTouches[0].clientX, y:e.changedTouches[0].clientY};
+            return {x:e.clientX, y:e.clientY};
+          }
+
+          window.__slimPickerMove = function(e){
+            var p = pointXY(e);
+            showHL(document.elementFromPoint(p.x, p.y));
           };
 
+          // === الإصلاح 1: التمييز بين التمرير واللمسة الفعلية ===
+          var __slimDownX = 0, __slimDownY = 0, __slimMoved = false;
+          window.__slimPickerDown = function(e){
+            var p = pointXY(e);
+            __slimDownX = p.x; __slimDownY = p.y; __slimMoved = false;
+            // لا نستدعي preventDefault هنا نهائيًا، حتى يبقى التمرير طبيعيًا
+          };
+          window.__slimPickerTrack = function(e){
+            window.__slimPickerMove(e);
+            var p = pointXY(e);
+            if (Math.abs(p.x - __slimDownX) > 10 || Math.abs(p.y - __slimDownY) > 10) __slimMoved = true;
+          };
+          // === نهاية الإصلاح 1 ===
+
           function shapeOf(el){
-            try{var r=el.getBoundingClientRect();if(r.width<1||r.height<1)return null;
-              var br=getComputedStyle(el).borderRadius||'',m=Math.min(r.width,r.height);
-              if(/50%/.test(br)||(parseFloat(br)>=m/2-2))return 'round';
-              return Math.abs(r.width-r.height)<=6?'square':'rect';
+            try{
+              var r=el.getBoundingClientRect();
+              if(r.width<1||r.height<1) return null;
+              var cs=getComputedStyle(el); var br=cs.borderRadius||'';
+              var minSide=Math.min(r.width,r.height);
+              var isRound=/50%/.test(br)||(parseFloat(br)>=minSide/2-2);
+              if(isRound) return 'round';
+              return (Math.abs(r.width-r.height)<=6)?'square':'rect';
             }catch(e){return null;}
           }
           function sizeBucketOf(el){
-            try{var r=el.getBoundingClientRect(),b=Math.max(r.width,r.height);if(b<=0)return null;return b<=84?'small':(b<=300?'medium':'large');}
-            catch(e){return null;}
-          }
-          function normalizeText(v){return (v||'').replace(/\s+/g,' ').trim();}
-          function semanticOf(el){
             try{
-              var text=normalizeText(el.textContent||'').slice(0,120);
-              var aria=el.getAttribute('aria-label')||'';
-              var title=el.getAttribute('title')||'';
-              var alt=el.getAttribute('alt')||'';
-              var all=(text+' '+aria+' '+title+' '+alt).toLowerCase();
-              if(/(?:^|\s)\d{1,2}\s*(?:س|ساعة|ساعات|h|hr|hrs)(?=\s|$)/i.test(all))return 'time';
-              if(/🌐|(?:globe|world|public|عام|العامة|الجميع|عامّة)/i.test(all))return 'public';
-              if(/(?:profile|person|account|بروفايل|ملف شخصي|حساب)/i.test(all))return 'profile';
-              if(/(?:comment|share|like|follow|reaction|تعليق|مشاركة|إعجاب|متابعة|تفاعل)/i.test(all))return 'interaction';
-              return null;
+              var r=el.getBoundingClientRect(); var big=Math.max(r.width,r.height);
+              if(big<=0) return null;
+              return big<=84?'small':(big<=300?'medium':'large');
             }catch(e){return null;}
           }
 
-          function buildInfo(el, includeNeighbors){
-            var out={tag:el.tagName,w:Math.round(el.getBoundingClientRect().width),h:Math.round(el.getBoundingClientRect().height)};
-            out.shape=shapeOf(el);out.sizeBucket=sizeBucketOf(el);
-            var role=el.getAttribute('role');if(!role){var ra=el.closest('[role]');role=ra?ra.getAttribute('role'):null;}if(role)out.role=role;
-            var aria=el.getAttribute('aria-label');if(!aria){var aa=el.closest('[aria-label]');aria=aa?aa.getAttribute('aria-label'):null;}if(aria)out.aria=aria;
-            var tid=el.getAttribute('data-testid');if(!tid){var ta=el.closest('[data-testid]');tid=ta?ta.getAttribute('data-testid'):null;}if(tid)out.testid=tid;
-            if(el.id)out.elId=el.id;
-            var link=el.tagName==='A'?el:el.closest('a');
-            if(link){
-              var href=link.getAttribute('href')||'';
-              var m=href.match(/profile\.php\?id=(\d+)/i);if(m)out.profileId=m[1];
-              var m2=href.match(/^\/?([A-Za-z0-9_.\-]{2,})\/?(?:\?|$)/);
-              if(m2&&!/^(groups|watch|reel|photo|posts|permalink|marketplace|events|help|settings|login)$/i.test(m2[1]))out.profileSlug=m2[1];
-              var pn=normalizeText(link.textContent||link.getAttribute('aria-label')||'').slice(0,80);
-              if(pn)out.profileName=pn;
-              if(href)out.profileLink=href;
-              if(el.tagName==='IMG')out.profileImage='true';
-            }
-            var txt=normalizeText(el.textContent||'').slice(0,60);if(txt)out.text=txt;
-            var sem=semanticOf(el);if(sem)out.semantic=sem;
-            out.label=out.aria||(out.profileId?'بروفايل #'+out.profileId:null)||(out.profileSlug?'بروفايل: '+out.profileSlug:null)||out.semantic||out.testid||out.text||el.tagName;
-            if(includeNeighbors){
-              var list=[],seen=[];
-              function add(n,rel){
-                if(!n||n===el||n===hl||n===tip||seen.indexOf(n)>=0)return;
-                var r;try{r=n.getBoundingClientRect();}catch(e){return;}
-                if(!r||r.width<1||r.height<1||r.width>1200||r.height>1200)return;
-                var txt=normalizeText(n.textContent||'');var sem=semanticOf(n);
-                var isUseful=!!sem||(txt.length>0&&txt.length<=30)||n.tagName==='IMG'||n.tagName==='SVG'||n.getAttribute('aria-label')||n.getAttribute('title');
-                if(!isUseful)return;
-                var inf=buildInfo(n,false);inf.relation=rel;inf.label=inf.semantic==='time'?'توقيت: '+(inf.text||''):inf.semantic==='public'?'رمز/خصوصية: '+(inf.text||inf.aria||'عام'):('مجاور: '+(inf.text||inf.aria||inf.tag));
-                seen.push(n);list.push(inf);
+          // === النظام الجديد: نجمع كل الإشارات المتاحة دفعة وحدة، بدل ما نختار
+          // إشارة واحدة فقط. المستخدم بعدين يختار أي مزيج منها يناسب قصده بالضبط. ===
+          function buildInfo(el){
+            var out = {tag: el.tagName};
+            out.w = Math.round(el.getBoundingClientRect().width);
+            out.h = Math.round(el.getBoundingClientRect().height);
+            out.shape = shapeOf(el);
+            out.sizeBucket = sizeBucketOf(el);
+
+            var role = el.getAttribute('role');
+            if (!role) { var ra = el.closest('[role]'); role = ra ? ra.getAttribute('role') : null; }
+            if (role) out.role = role;
+
+            var aria = el.getAttribute('aria-label');
+            if (!aria) { var aa = el.closest('[aria-label]'); aria = aa ? aa.getAttribute('aria-label') : null; }
+            if (aria) out.aria = aria;
+
+            var tid = el.getAttribute('data-testid');
+            if (!tid) { var ta = el.closest('[data-testid]'); tid = ta ? ta.getAttribute('data-testid') : null; }
+            if (tid) out.testid = tid;
+
+            if (el.id) out.elId = el.id;
+
+            var link = el.tagName === 'A' ? el : el.closest('a');
+            if (link) {
+              var href = link.getAttribute('href') || '';
+              var m = href.match(/profile\.php\?id=(\d+)/);
+              if (m) out.profileId = m[1];
+              var m2 = href.match(/^\/?([A-Za-z0-9_.\-]{2,})\/?(\?|${'$'})/);
+              if (m2 && !/^(groups|watch|reel|photo|posts|permalink|marketplace|events|help|settings|login)${'$'}/i.test(m2[1])) {
+                out.profileSlug = m2[1];
               }
-              var a=el;
-              for(var depth=0;a&&depth<5;depth++,a=a.parentElement){
-                add(a.previousElementSibling,'شقيق سابق');add(a.nextElementSibling,'شقيق لاحق');
-                if(a.parentElement){
-                  Array.from(a.parentElement.children).slice(0,12).forEach(function(c){add(c,'من نفس الحاوية');});
-                }
-              }
-              var anc=el.parentElement;
-              if(anc){Array.from(anc.children).slice(0,16).forEach(function(c){add(c,'عنصر مجاور مباشر');});}
-              out.neighbors=list.slice(0,16);
             }
+
+            var txt = (el.textContent||'').trim().replace(/\s+/g,' ').slice(0,60);
+            if (txt) out.text = txt;
+
+            out.label = out.aria || (out.profileId ? ('بروفايل #'+out.profileId) : null) ||
+              (out.profileSlug ? ('بروفايل: '+out.profileSlug) : null) || out.testid || out.text || el.tagName;
             return out;
           }
 
-          window.__slimPickerTap=function(e){
-            if(__slimMoved)return;
-            var p=pointXY(e),el=document.elementFromPoint(p.x,p.y);
-            if(!el||el===hl||el===tip||tip.contains(el))return;
-            e.preventDefault();e.stopPropagation();
-            if(window.SlimPicker)window.SlimPicker.pick(JSON.stringify(buildInfo(el,true)));
+          window.__slimPickerTap = function(e){
+            if (__slimMoved) return; // كانت تمرير، مو ضغطة — نتجاهلها بدون أي تأثير
+            var p = pointXY(e);
+            var el = document.elementFromPoint(p.x, p.y);
+            if (!el || el === hl || el === tip || tip.contains(el)) return;
+            e.preventDefault(); e.stopPropagation();
+            var info = buildInfo(el);
+            if (window.SlimPicker) window.SlimPicker.pick(JSON.stringify(info));
           };
-          document.addEventListener('pointerdown',window.__slimPickerDown,true);
-          document.addEventListener('pointermove',window.__slimPickerTrack,true);
-          document.addEventListener('pointerup',window.__slimPickerTap,true);
-          document.addEventListener('click',window.__slimPickerTap,true);
+
+          document.addEventListener('pointerdown', window.__slimPickerDown, true);
+          document.addEventListener('pointermove', window.__slimPickerTrack, true);
+          document.addEventListener('pointerup', window.__slimPickerTap, true);
+          // احتياطي لأجهزة/متصفحات ما تدعم pointer events بشكل كامل
+          document.addEventListener('click', window.__slimPickerTap, true);
         })();
     """.trimIndent()
 
     private fun pickerDeactivateJs(): String = """
         (function(){
-          window.__slimPickerActive=false;
-          if(window.__slimPickerDown)document.removeEventListener('pointerdown',window.__slimPickerDown,true);
-          if(window.__slimPickerTrack)document.removeEventListener('pointermove',window.__slimPickerTrack,true);
-          if(window.__slimPickerTap){
-            document.removeEventListener('pointerup',window.__slimPickerTap,true);
-            document.removeEventListener('click',window.__slimPickerTap,true);
+          window.__slimPickerActive = false;
+          if (window.__slimPickerMove) document.removeEventListener('pointermove', window.__slimPickerMove, true);
+          if (window.__slimPickerTap) {
+            document.removeEventListener('pointerdown', window.__slimPickerTap, true);
+            document.removeEventListener('click', window.__slimPickerTap, true);
           }
-          var hl=document.getElementById('slim-picker-highlight');if(hl)hl.remove();
-          var tip=document.getElementById('slim-picker-tip');if(tip)tip.remove();
+          var hl = document.getElementById('slim-picker-highlight'); if (hl) hl.remove();
+          var tip = document.getElementById('slim-picker-tip'); if (tip) tip.remove();
         })();
     """.trimIndent()
 
@@ -2199,7 +2202,6 @@ class MainActivity : Activity() {
         featSwitch("duration", "خيار \"حظر مؤقت (24 ساعة / 7 أيام)\"")
         featSwitch("scope", "خيار \"نطاق برابط محدد / استثناء رابط\"")
         featSwitch("log", "سجّل آخر 20 عملية إخفاء فعلية")
-        featSwitch("debug", "وضع Debug: إظهار حدود الكرت وسبب المطابقة")
         featSwitch("conflict", "تنبيه عند تشابه قاعدة جديدة مع قاعدة موجودة")
         featSwitch("test", "زر \"اختبار القاعدة الآن\" قبل الحفظ")
         featSwitch("cap_warning", "تحذير عند تجاوز عدد القواعد 100 (يؤثر بالأداء)")
@@ -2252,148 +2254,142 @@ class MainActivity : Activity() {
             return if (v.isEmpty()) null else v
         }
         val autoLabel = str("label") ?: str("tag") ?: "عنصر"
+        // اقتراح 7: تسمية تلقائية أذكى (مختصرة + قابلة للتعديل)
         val smartDefaultName = (autoLabel.take(24) + (if (autoLabel.length > 24) "…" else "")) +
             (str("tag")?.let { " ($it)" } ?: "")
+
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 16, 24, 8) }
-        container.addView(TextView(this).apply { text = "اسم القاعدة:"; setPadding(0, 0, 0, 4) })
+
+        container.addView(TextView(this).apply { text = "اسم القاعدة (تقدر تعدّله):"; setPadding(0, 0, 0, 4) })
         val nameInput = EditText(this).apply { setText(smartDefaultName) }
         container.addView(nameInput)
 
         container.addView(TextView(this).apply {
-            text = "المحددات الأساسية: في وضع AND يجب أن تتطابق كلها. أما العناصر المجاورة أدناه فتعمل كبدائل OR: يكفي أن يظهر أي واحد منها لاعتبار الحاوية نفسها هدفًا للحظر."
+            text = "اختر أي خصائص تعتمد عليها بالحظر — كل ما تحدده لازم يتطابق كلّه بنفس الوقت (AND):"
             setPadding(0, 12, 0, 12)
         })
+
         val checks = LinkedHashMap<String, CheckBox>()
         fun addCheck(key: String, title: String, defaultOn: Boolean) {
             val cb = CheckBox(this).apply { text = title; isChecked = defaultOn }
-            checks[key] = cb; container.addView(cb)
+            checks[key] = cb
+            container.addView(cb)
         }
+
         val hasIdentity = str("profileId") != null || str("profileSlug") != null
-        str("profileId")?.let { addCheck("profileId", "معرّف الحساب الثابت (id: $it)", true) }
+        str("profileId")?.let { addCheck("profileId", "معرّف الحساب الثابت (id: $it) — الأدق لحظر حساب بعينه", true) }
         str("profileSlug")?.let { addCheck("profileSlug", "اسم رابط الحساب (/$it)", str("profileId") == null) }
-        str("profileName")?.let { addCheck("profileName", "اسم البروفايل: \"$it\"", false) }
-        str("profileLink")?.let { addCheck("profileLink", "رابط البروفايل", false) }
-        if (str("profileImage") != null) addCheck("profileImage", "صورة البروفايل", false)
         str("aria")?.let { addCheck("aria", "الوصف النصي بالضبط: \"$it\"", !hasIdentity) }
-        str("testid")?.let { addCheck("testid", "data-testid: $it", !hasIdentity && str("aria") == null) }
-        str("elId")?.let { addCheck("elId", "id: $it", false) }
+        str("testid")?.let { addCheck("testid", "معرّف داخلي مخفي (data-testid: $it)", !hasIdentity && str("aria") == null) }
+        str("elId")?.let { addCheck("elId", "معرّف id الثابت: $it", false) }
         str("text")?.let { addCheck("text", "النص الظاهر بالضبط: \"$it\"", false) }
         addCheck("tag", "نوع العنصر (${str("tag") ?: "?"})", false)
         str("role")?.let { addCheck("role", "الدور الوظيفي (role=$it)", false) }
         str("shape")?.let { addCheck("shape", "الشكل (${shapeLabelAr(it)})", false) }
         str("sizeBucket")?.let { addCheck("sizeBucket", "الحجم التقريبي (${sizeLabelAr(it)})", false) }
-        str("semantic")?.let { sem -> addCheck("semantic", "نوع دلالي: ${when(sem){"time"->"توقيت";"public"->"رمز عام/كرة أرضية";"profile"->"بروفايل";"interaction"->"تفاعل";else->sem}}", false) }
 
-        var similarMode = false
-        val similarBtn = Button(this).apply { text = "🎯 وضع التشابه الحقيقي: أي محدد من المختارات يكفي (OR)" }
+        val similarBtn = Button(this).apply {
+            text = "🎯 حظر كل عنصر مشابه (نفس النوع + الشكل + الحجم + الموضع، بدون تحديد هوية بعينها)"
+        }
         similarBtn.setOnClickListener {
-            similarMode = true
-            checks.forEach { (_, cb) -> cb.isChecked = false }
-            listOf("tag","role","shape","sizeBucket","semantic").forEach { checks[it]?.isChecked = true }
-            notifyUser("تم تفعيل التشابه OR: تطابق أي محدد من هذه المجموعة يكفي")
+            checks.forEach { (k, cb) -> cb.isChecked = (k == "tag" || k == "role" || k == "shape" || k == "sizeBucket") }
+            notifyUser("اخترت معايير التشابه — راجعها ثم اضغط حظر")
         }
         container.addView(similarBtn)
-        val exactBtn = Button(this).apply { text = "🔒 حظر هذا العنصر بالضبط (AND)" }
+
+        val exactBtn = Button(this).apply { text = "🔒 حظر هذا العنصر بالضبط فقط (أدق معرّف متاح)" }
         exactBtn.setOnClickListener {
-            similarMode = false
             checks.forEach { (k, cb) -> cb.isChecked = (k == "profileId" || k == "profileSlug" || k == "aria" || k == "testid" || k == "elId") }
-            notifyUser("تم اختيار المعرفات الدقيقة بنظام AND")
+            notifyUser("اخترت أدق معرّف متاح — راجعه ثم اضغط حظر")
         }
         container.addView(exactBtn)
 
-        // العناصر المجاورة التي يمكن استخدامها كـ OR anchors. هذه هي النقطة الجديدة المهمة:
-        // مثال: صورة البروفايل + نص 5س/12س + رمز الكرة الأرضية. إذا ظهر أي anchor منها،
-        // لا نحظر الـanchor وحده؛ نبحث عن الكرت/المنشور المشترك ونحظره بالكامل.
-        val neighborChecks = mutableListOf<Pair<JSONObject, CheckBox>>()
-        val neighbors = info.optJSONArray("neighbors")
-        if (neighbors != null && neighbors.length() > 0) {
-            container.addView(TextView(this).apply {
-                text = "\nمحددات مجاورة (OR) — اختر واحدًا أو عدة عناصر. ظهور أي واحد منها يكفي لتحديد نفس الكرت/المنشور:"
-                setPadding(0, 12, 0, 4)
-            })
-            for (i in 0 until minOf(neighbors.length(), 16)) {
-                val n = neighbors.optJSONObject(i) ?: continue
-                val nc = n.optJSONObject("criteria") ?: run {
-                    val x = JSONObject()
-                    listOf("tag","role","aria","testid","elId","profileId","profileSlug","profileName","profileLink","profileImage","text","shape","sizeBucket","semantic").forEach { k -> if(n.has(k)) x.put(k,n.opt(k)) }
-                    x
-                }
-                if (nc.length() == 0) continue
-                val label = n.optString("label", "عنصر مجاور")
-                val cb = CheckBox(this).apply { text = "↳ $label"; isChecked = false }
-                neighborChecks.add(nc to cb); container.addView(cb)
-            }
-        }
+        container.addView(TextView(this).apply {
+            text = "ملاحظة: التشابه هنا هيكلي/بصري (نفس النوع والشكل والحجم والموضع)، مو تعرّف على الوجه/الصورة نفسها — فيسبوك ما يعطينا وصول لتحليل الصور."
+            textSize = 12f
+            setPadding(0, 8, 0, 8)
+        })
 
+        // اقتراح 1: حظر الكرت كامل بدل جزء منه فقط
         var cardModeCb: CheckBox? = null
         if (ebFeat("cardmode")) {
             cardModeCb = CheckBox(this).apply {
-                text = "حظر الكرت/المنشور الكامل حول الهدف والمحددات المجاورة"
-                isChecked = true
+                text = "حظر الحاوية/الكرت الكامل حول هذا العنصر (مثال: بطاقة اقتراح كاملة) بدل هذا الجزء فقط"
+                isChecked = false
             }
             container.addView(cardModeCb)
         }
+
+        // اقتراح 2: حظر مؤقت
         var durationSpinner: Spinner? = null
         val durationOptions = listOf("دائم" to 0L, "24 ساعة" to 86_400_000L, "7 أيام" to 604_800_000L, "30 يوم" to 2_592_000_000L)
         if (ebFeat("duration")) {
             container.addView(TextView(this).apply { text = "مدة الحظر:"; setPadding(0, 12, 0, 4) })
-            durationSpinner = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, durationOptions.map { it.first }) }
+            durationSpinner = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, durationOptions.map { it.first })
+            }
             container.addView(durationSpinner)
         }
+
+        // اقتراح 3: نطاق رابط / استثناء رابط
         var scopeSpinner: Spinner? = null
         var urlPatternInput: EditText? = null
         if (ebFeat("scope")) {
             container.addView(TextView(this).apply { text = "نطاق تطبيق القاعدة:"; setPadding(0, 12, 0, 4) })
-            scopeSpinner = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("كل صفحات فيسبوك","فقط برابط محدد","كل مكان ماعدا رابط محدد")) }
+            val scopeOptions = listOf("كل صفحات فيسبوك" to "all", "فقط برابط محدد" to "only", "كل مكان ماعدا رابط محدد" to "except")
+            scopeSpinner = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, scopeOptions.map { it.first })
+            }
             container.addView(scopeSpinner)
             urlPatternInput = EditText(this).apply { hint = "جزء من الرابط (مثال: /groups/12345)" }
             container.addView(urlPatternInput)
         }
+
+        // اقتراح 6: اختبار القاعدة الآن (dry-run بدون إخفاء فعلي)
         if (ebFeat("test")) {
-            container.addView(Button(this).apply {
-                text = "اختبار المطابقة الآن (يشمل OR والمحددات المجاورة)"
-                setOnClickListener {
-                    val testCriteria = JSONObject(); checks.forEach { (key, cb) -> if(cb.isChecked) putCriteriaKey(testCriteria,key,::str) }
-                    val testNeighbors = org.json.JSONArray(); neighborChecks.forEach { (nc, cb) -> if(cb.isChecked) testNeighbors.put(nc) }
-                    if(testCriteria.length()==0 && testNeighbors.length()==0) notifyUser("اختر معيارًا أو محددًا مجاورًا واحدًا على الأقل")
-                    else {
-                        val payload = JSONObject().apply { put("criteria", testCriteria); put("neighborCriteria", testNeighbors); put("matchMode", if(similarMode) "OR" else "AND") }
-                        web.evaluateJavascript(elementBlockDryRunJs(payload), null)
-                    }
+            val testBtn = Button(this).apply { text = "🧪 اختبار القاعدة الآن (بدون حفظ)" }
+            testBtn.setOnClickListener {
+                val testCriteria = JSONObject()
+                checks.forEach { (key, cb) -> if (cb.isChecked) putCriteriaKey(testCriteria, key, ::str) }
+                if (testCriteria.length() == 0) {
+                    notifyUser("اختر معيارًا واحدًا على الأقل للاختبار")
+                } else {
+                    web.evaluateJavascript(elementBlockDryRunJs(testCriteria), null)
                 }
-            })
+            }
+            container.addView(testBtn)
         }
 
         AlertDialog.Builder(this)
             .setTitle("حظر: $autoLabel")
             .setView(ScrollView(this).apply { addView(container) })
-            .setNegativeButton("إلغاء") { _, _ -> if(pickerModeActive) applyElementPicker(true) }
+            .setNegativeButton("إلغاء") { _, _ -> if (pickerModeActive) applyElementPicker(true) }
             .setPositiveButton("حظر") { _, _ ->
-                val criteria=JSONObject(); var any=false
-                checks.forEach { (key,cb) -> if(cb.isChecked){any=true;putCriteriaKey(criteria,key,::str)} }
-                val selectedNeighbors=org.json.JSONArray()
-                neighborChecks.forEach { (nc,cb) -> if(cb.isChecked){any=true;selectedNeighbors.put(nc)} }
-                if(!any) notifyUser("اختر معيارًا أو محددًا مجاورًا واحدًا على الأقل")
-                else {
-                    val finalLabel=nameInput.text.toString().trim().ifEmpty{autoLabel}
-                    val expandToCard=cardModeCb?.isChecked ?: true
-                    val durationMs=durationSpinner?.let{durationOptions.getOrNull(it.selectedItemPosition)?.second}?:0L
-                    val expiresAt=if(durationMs>0L)System.currentTimeMillis()+durationMs else 0L
-                    val urlScope=when(scopeSpinner?.selectedItemPosition){1->"only";2->"except";else->"all"}
-                    val urlPattern=urlPatternInput?.text?.toString()?.trim() ?: ""
-                    saveElementBlockRuleAdvanced(criteria,finalLabel,expandToCard,expiresAt,urlScope,urlPattern,selectedNeighbors,if(similarMode)"OR" else "AND")
+                val criteria = JSONObject()
+                var anySelected = false
+                checks.forEach { (key, cb) ->
+                    if (cb.isChecked) { anySelected = true; putCriteriaKey(criteria, key, ::str) }
                 }
-                if(pickerModeActive) applyElementPicker(true)
-            }.show()
+                if (!anySelected) {
+                    notifyUser("اختر معيارًا واحدًا على الأقل")
+                } else {
+                    val finalLabel = nameInput.text.toString().trim().ifEmpty { autoLabel }
+                    val expandToCard = cardModeCb?.isChecked ?: false
+                    val durationMs = durationSpinner?.let { durationOptions.getOrNull(it.selectedItemPosition)?.second } ?: 0L
+                    val expiresAt = if (durationMs > 0L) System.currentTimeMillis() + durationMs else 0L
+                    val urlScope = when (scopeSpinner?.selectedItemPosition) { 1 -> "only"; 2 -> "except"; else -> "all" }
+                    val urlPattern = urlPatternInput?.text?.toString()?.trim() ?: ""
+                    saveElementBlockRuleAdvanced(criteria, finalLabel, expandToCard, expiresAt, urlScope, urlPattern)
+                }
+                if (pickerModeActive) applyElementPicker(true)
+            }
+            .show()
     }
 
     private fun putCriteriaKey(criteria: JSONObject, key: String, str: (String) -> String?) {
         when (key) {
             "profileId" -> criteria.put("profileId", str("profileId"))
             "profileSlug" -> criteria.put("profileSlug", str("profileSlug"))
-            "profileName" -> criteria.put("profileName", str("profileName"))
-            "profileLink" -> criteria.put("profileLink", str("profileLink"))
-            "profileImage" -> criteria.put("profileImage", str("profileImage"))
             "aria" -> { criteria.put("aria", str("aria")); criteria.put("ariaMode", "exact") }
             "testid" -> criteria.put("testid", str("testid"))
             "elId" -> criteria.put("elId", str("elId"))
@@ -2402,7 +2398,6 @@ class MainActivity : Activity() {
             "role" -> criteria.put("role", str("role"))
             "shape" -> criteria.put("shape", str("shape"))
             "sizeBucket" -> criteria.put("sizeBucket", str("sizeBucket"))
-            "semantic" -> criteria.put("semantic", str("semantic"))
         }
     }
 
@@ -2412,9 +2407,7 @@ class MainActivity : Activity() {
         expandToCard: Boolean = false,
         expiresAt: Long = 0L,
         urlScope: String = "all",
-        urlPattern: String = "",
-        neighborCriteria: org.json.JSONArray = org.json.JSONArray(),
-        matchMode: String = "AND"
+        urlPattern: String = ""
     ) {
         // اقتراح 10: تحذير عند تجاوز عدد القواعد الموصى به
         val existing = elementBlockRulesJson()
@@ -2444,14 +2437,6 @@ class MainActivity : Activity() {
         if (expandToCard) o.put("expandToCard", true)
         if (expiresAt > 0L) o.put("expiresAt", expiresAt)
         if (urlScope != "all") { o.put("urlScope", urlScope); o.put("urlPattern", urlPattern) }
-        if (neighborCriteria.length() > 0) o.put("neighborCriteria", neighborCriteria)
-        // When a rule expands to a card, selected criteria describe evidence that may
-        // live on different descendants of the SAME card. This avoids requiring all
-        // selectors to match one DOM node and avoids the old "more criteria = fewer cards"
-        // failure mode. Exact element matching remains available when expandToCard=false.
-        if (expandToCard) o.put("cardEvidenceMode", "SAME_CARD")
-        o.put("evidenceKeys", criteria.keys().asSequence().toList())
-        o.put("matchMode", matchMode)
         val a = elementBlockRulesJson()
         a.put(o)
         saveElementBlockRulesJson(a)
@@ -2460,103 +2445,56 @@ class MainActivity : Activity() {
     }
 
     // اقتراح 6: اختبار بدون حفظ ولا إخفاء فعلي — يعدّ فقط ويرجّع الرقم عبر SlimEBTest
-    private fun elementBlockDryRunJs(payload: JSONObject): String {
-        val payloadLiteral = payload.toString()
+    private fun elementBlockDryRunJs(criteria: JSONObject): String {
+        val criteriaLiteral = criteria.toString()
         return """
             (function(){
-              try{
-                var p=$payloadLiteral,c=p.criteria||{},neighbors=p.neighborCriteria||[],mode=p.matchMode||'AND';
-                function norm(v){return(v||'').replace(/\\s+/g,' ').trim();}
-                function attr(el,n){try{return el.getAttribute(n)||'';}catch(e){return '';}}
-                function href(el){try{var a=el.tagName==='A'?el:el.closest('a');return a?(a.getAttribute('href')||''):'';}catch(e){return '';}}
-                function profileData(el){
-                  var a=null;try{a=el.tagName==='A'?el:el.closest('a');}catch(e){}
-                  var h=a?(a.getAttribute('href')||''):'',name=a?norm(a.textContent||a.getAttribute('aria-label')||''):'';
-                  var id=(h.match(/profile\\.php\\?[^#]*?id=(\\d+)/i)||[])[1]||'';
-                  var slug=(h.match(/^\\/?([A-Za-z0-9_.\\-]{2,})\\/?(?:\\?|$)/)||[])[1]||'';
-                  if(/^(groups|watch|reel|photo|posts|permalink|marketplace|events|help|settings|login)$/i.test(slug))slug='';
-                  return {id:id,slug:slug,name:name,link:h};
+              try {
+                var c = $criteriaLiteral;
+                function shapeOf(el){
+                  try{
+                    var r=el.getBoundingClientRect();
+                    if(r.width<1||r.height<1) return null;
+                    var cs=getComputedStyle(el); var br=cs.borderRadius||'';
+                    var minSide=Math.min(r.width,r.height);
+                    var isRound=/50%/.test(br)||(parseFloat(br)>=minSide/2-2);
+                    if(isRound) return 'round';
+                    return (Math.abs(r.width-r.height)<=6)?'square':'rect';
+                  }catch(e){return null;}
                 }
-                function semanticOf(el){
-                  var x=norm((el.textContent||'')+' '+attr(el,'aria-label')+' '+attr(el,'title')+' '+attr(el,'alt')).toLowerCase();
-                  if(/(?:^|\\s)\\d{1,2}\\s*(?:س|ساعة|ساعات|h|hr|hrs)(?=\\s|$)/i.test(x))return'time';
-                  if(/(?:^|\\s)\\d{1,3}\\s*(?:د|دقيقة|دقائق|min|mins)(?=\\s|$)/i.test(x))return'time';
-                  if(/(?:أمس|اليوم|yesterday|today)/i.test(x))return'time';
-                  if(/🌐|(?:globe|world|public|عام|العامة|الجميع|عامّة)/i.test(x))return'public';
-                  if(/(?:profile|person|account|بروفايل|ملف شخصي|حساب)/i.test(x))return'profile';
-                  if(/(?:comment|share|like|follow|reaction|تعليق|مشاركة|إعجاب|متابعة|تفاعل)/i.test(x))return'interaction';
-                  return null;
+                function sizeBucketOf(el){
+                  try{
+                    var r=el.getBoundingClientRect(); var big=Math.max(r.width,r.height);
+                    if(big<=0) return null;
+                    return big<=84?'small':(big<=300?'medium':'large');
+                  }catch(e){return null;}
                 }
-                function one(el,k,v){
-                  var pd=profileData(el),h=pd.link.toLowerCase();
-                  if(k==='tag')return el.tagName===v;
-                  if(k==='role')return attr(el,'role')===v;
-                  if(k==='aria')return attr(el,'aria-label')===v;
-                  if(k==='testid')return attr(el,'data-testid')===v;
-                  if(k==='elId')return el.id===v;
-                  if(k==='profileId')return pd.id===String(v);
-                  if(k==='profileSlug')return pd.slug.toLowerCase()===String(v).toLowerCase();
-                  if(k==='profileName')return !!pd.name&&pd.name.toLowerCase()===String(v).toLowerCase();
-                  if(k==='profileLink')return !!h&&h.indexOf(String(v).toLowerCase())!==-1;
-                  if(k==='profileImage')return el.tagName==='IMG'&&!!pd.link;
-                  if(k==='text')return norm(el.textContent||'')===String(v);
-                  if(k==='shape')return false;
-                  if(k==='sizeBucket')return false;
-                  if(k==='semantic')return semanticOf(el)===v;
-                  return false;
+                function ruleMatches(el, c){
+                  try{
+                    if(c.tag && el.tagName!==c.tag) return false;
+                    if(c.role){ var r=el.getAttribute('role')||''; if(!r){var ra=el.closest('[role]'); r=ra?ra.getAttribute('role'):'';} if(r!==c.role) return false; }
+                    if(c.aria){ var a=el.getAttribute('aria-label')||''; if(!a){var aa=el.closest('[aria-label]'); a=aa?aa.getAttribute('aria-label'):'';}
+                      if(c.ariaMode==='contains'){ if(a.indexOf(c.aria)===-1) return false; } else { if(a!==c.aria) return false; } }
+                    if(c.testid){ var t=el.getAttribute('data-testid')||''; if(!t){var ta=el.closest('[data-testid]'); t=ta?ta.getAttribute('data-testid'):'';} if(t!==c.testid) return false; }
+                    if(c.elId){ if(el.id!==c.elId) return false; }
+                    if(c.profileId || c.profileSlug){
+                      var link = el.tagName==='A'?el:el.closest('a'); if(!link) return false;
+                      var href = link.getAttribute('href')||'';
+                      if(c.profileId && href.indexOf('profile.php?id='+c.profileId)===-1) return false;
+                      if(c.profileSlug && href.indexOf('/'+c.profileSlug)===-1) return false;
+                    }
+                    if(c.text){ var txt=(el.textContent||'').trim();
+                      if(c.textMode==='contains'){ if(txt.indexOf(c.text)===-1) return false; } else { if(txt!==c.text) return false; } }
+                    if(c.shape){ if(shapeOf(el)!==c.shape) return false; }
+                    if(c.sizeBucket){ if(sizeBucketOf(el)!==c.sizeBucket) return false; }
+                    return true;
+                  }catch(e){ return false; }
                 }
-                function match(el,c,m){
-                  var ks=['tag','role','aria','testid','elId','profileId','profileSlug','profileName','profileLink','text','shape','sizeBucket','semantic'].filter(function(k){return c[k]!==undefined&&c[k]!==null&&String(c[k])!=='';});
-                  if(!ks.length)return false;
-                  if(m==='OR')return ks.some(function(k){return one(el,k,c[k]);});
-                  return ks.every(function(k){return one(el,k,c[k]);});
-                }
-                function evidenceCount(card){
-                  var types={}, all=card.querySelectorAll('a,button,img,svg,[role],span,div'), txt=norm(card.textContent||'');
-                  for(var i=0;i<all.length;i++){
-                    var x=all[i],sem=semanticOf(x);if(sem)types[sem]=true;
-                    var pd=profileData(x);if(pd.id||pd.slug||pd.name)types.profile=true;
-                    if(x.tagName==='IMG'&&((attr(x,'alt')||'').length>0))types.image=true;
-                  }
-                  if(txt.length>=8)types.text=true;
-                  return Object.keys(types).length;
-                }
-                function findTarget(el){
-                  var best=el, bestScore=-1, n=el;
-                  for(var d=0;n&&d<18;d++,n=n.parentElement){
-                    if(n===document.body||n===document.documentElement)break;
-                    var r=n.getBoundingClientRect();if(!r||r.width<1||r.height<1||r.width>1600||r.height>1800)continue;
-                    var score=evidenceCount(n)*20;
-                    if(n.tagName==='ARTICLE'||attr(n,'role')==='article')score+=8;
-                    if(attr(n,'data-pagelet'))score+=5;
-                    var children=n.querySelectorAll('a,button,img,svg,[role="button"],[role="link"]').length;
-                    if(children>80)score-=Math.min(20,Math.floor(children/20));
-                    if(score>bestScore){bestScore=score;best=n;}
-                  }
-                  return best;
-                }
-                function sameCardEvidence(card,c){
-                  var keys=Object.keys(c),found=0;
-                  for(var i=0;i<keys.length;i++){
-                    var k=keys[i],ok=false,nodes=card.querySelectorAll('a,button,[role],img,svg,span,div');
-                    for(var j=0;j<nodes.length&&!ok;j++)ok=one(nodes[j],k,c[k]);
-                    if(ok)found++;
-                  }
-                  // Evidence is additive: criteria can be on different descendants.
-                  // If two or more were selected, any two independent pieces are enough;
-                  // with one selected, the single criterion is enough.
-                  return keys.length<=1 ? found===keys.length : found>=2;
-                }
-                var els=document.querySelectorAll('a,button,[role],img,svg,span,div'),seen=[],count=0;
-                for(var i=0;i<els.length;i++){
-                  var el=els[i],target=findTarget(el),ok=false;
-                  if(mode==='AND'&&Object.keys(c).length>1)ok=sameCardEvidence(target,c);
-                  else ok=match(el,c,mode);
-                  if(!ok)for(var q=0;q<neighbors.length&&!ok;q++)ok=match(el,neighbors[q],'AND');
-                  if(ok&&seen.indexOf(target)<0){seen.push(target);count++;}
-                }
-                if(window.SlimEBTest)SlimEBTest.result(count);
-              }catch(e){if(window.SlimEBTest)SlimEBTest.result(-1);}
+                var candidates = document.querySelectorAll('a,button,[role],img,svg');
+                var count = 0;
+                for (var i=0;i<candidates.length;i++){ if (ruleMatches(candidates[i], c)) count++; }
+                if (window.SlimEBTest) window.SlimEBTest.result(count);
+              } catch(e) { if (window.SlimEBTest) window.SlimEBTest.result(-1); }
             })();
         """.trimIndent()
     }
@@ -2569,196 +2507,122 @@ class MainActivity : Activity() {
         val rulesLiteral = rulesArr.toString()
         return """
             (function(){
-              try{
-                window.__slimEBRules=$rulesLiteral;
-                window.__slimEBDebug=!!(($rulesLiteral).length&&($rulesLiteral)[0].__debugEnabled);
-
-                function norm(v){return(v||'').replace(/\\s+/g,' ').trim();}
-                function attr(el,n){try{return el.getAttribute(n)||'';}catch(e){return '';}}
-                function href(el){try{var a=el.tagName==='A'?el:el.closest('a');return a?(a.getAttribute('href')||''):'';}catch(e){return '';}}
-                function profileData(el){
-                  var a=null;try{a=el.tagName==='A'?el:el.closest('a');}catch(e){}
-                  var h=a?(a.getAttribute('href')||''):'', name=a?norm(a.textContent||a.getAttribute('aria-label')||''):'';
-                  var id=(h.match(/profile\\.php\\?[^#]*?id=(\\d+)/i)||[])[1]||'';
-                  var sm=(h.match(/^\\/?([A-Za-z0-9_.\\-]{2,})\\/?(?:\\?|$)/)||[])[1]||'';
-                  if(/^(groups|watch|reel|photo|posts|permalink|marketplace|events|help|settings|login)$/i.test(sm))sm='';
-                  return {id:id,slug:sm,name:name,link:h};
-                }
+              try {
+                window.__slimEBRules = $rulesLiteral;
                 function shapeOf(el){
-                  try{var r=el.getBoundingClientRect();if(r.width<1||r.height<1)return null;
-                    var br=getComputedStyle(el).borderRadius||'',m=Math.min(r.width,r.height);
-                    if(/50%/.test(br)||(parseFloat(br)>=m/2-2))return'round';
-                    return Math.abs(r.width-r.height)<=6?'square':'rect';
+                  try{
+                    var r=el.getBoundingClientRect();
+                    if(r.width<1||r.height<1) return null;
+                    var cs=getComputedStyle(el); var br=cs.borderRadius||'';
+                    var minSide=Math.min(r.width,r.height);
+                    var isRound=/50%/.test(br)||(parseFloat(br)>=minSide/2-2);
+                    if(isRound) return 'round';
+                    return (Math.abs(r.width-r.height)<=6)?'square':'rect';
                   }catch(e){return null;}
                 }
                 function sizeBucketOf(el){
-                  try{var r=el.getBoundingClientRect(),b=Math.max(r.width,r.height);
-                    if(b<=0)return null;return b<=84?'small':(b<=300?'medium':'large');
+                  try{
+                    var r=el.getBoundingClientRect(); var big=Math.max(r.width,r.height);
+                    if(big<=0) return null;
+                    return big<=84?'small':(big<=300?'medium':'large');
                   }catch(e){return null;}
                 }
-                function semanticOf(el){
+                function ruleMatches(el, c){
                   try{
-                    var all=(norm(el.textContent||'')+' '+attr(el,'aria-label')+' '+attr(el,'title')+' '+attr(el,'alt')).toLowerCase();
-                    if(/(?:^|\\s)\\d{1,2}\\s*(?:س|ساعة|ساعات|h|hr|hrs)(?=\\s|$)/i.test(all))return'time';
-                    if(/(?:^|\\s)\\d{1,3}\\s*(?:د|دقيقة|دقائق|min|mins)(?=\\s|$)/i.test(all))return'time';
-                    if(/(?:أمس|اليوم|yesterday|today)/i.test(all))return'time';
-                    if(/🌐|(?:globe|world|public|عام|العامة|الجميع|عامّة)/i.test(all))return'public';
-                    if(/(?:profile|person|account|بروفايل|ملف شخصي|حساب)/i.test(all))return'profile';
-                    if(/(?:comment|share|like|follow|reaction|تعليق|مشاركة|إعجاب|متابعة|تفاعل)/i.test(all))return'interaction';
-                    return null;
-                  }catch(e){return null;}
-                }
-                function one(el,c,k){
-                  try{
-                    if(k==='tag')return el.tagName===c.tag;
-                    if(k==='role')return attr(el,'role')===c.role;
-                    if(k==='aria')return c.ariaMode==='contains'?attr(el,'aria-label').indexOf(c.aria)!==-1:attr(el,'aria-label')===c.aria;
-                    if(k==='testid')return attr(el,'data-testid')===c.testid;
-                    if(k==='elId')return el.id===c.elId;
-                    var pd=profileData(el),h=pd.link.toLowerCase();
-                    if(k==='profileId')return !!pd.id&&pd.id===String(c.profileId);
-                    if(k==='profileSlug')return !!pd.slug&&pd.slug.toLowerCase()===String(c.profileSlug||'').toLowerCase();
-                    if(k==='profileName')return !!pd.name&&pd.name.toLowerCase()===String(c.profileName||'').toLowerCase();
-                    if(k==='profileLink')return !!h&&h.indexOf(String(c.profileLink||'').toLowerCase())!==-1;
-                    if(k==='profileImage')return el.tagName==='IMG' && !!profileData(el).link;
-                    if(k==='text')return c.textMode==='contains'?norm(el.textContent||'').indexOf(c.text)!==-1:norm(el.textContent||'')===c.text;
-                    if(k==='shape')return shapeOf(el)===c.shape;
-                    if(k==='sizeBucket')return sizeBucketOf(el)===c.sizeBucket;
-                    if(k==='semantic')return semanticOf(el)===c.semantic;
-                    return false;
-                  }catch(e){return false;}
-                }
-                function keysOf(c){
-                  var ks=['tag','role','aria','testid','elId','profileId','profileSlug','profileName','profileLink','text','shape','sizeBucket','semantic'];
-                  return ks.filter(function(k){return c[k]!==undefined&&c[k]!==null&&String(c[k])!=='';});
-                }
-                function ruleMatches(el,c,mode){
-                  var used=keysOf(c);if(!used.length)return false;
-                  if(mode==='OR')return used.some(function(k){return one(el,c,k);});
-                  return used.every(function(k){return one(el,c,k);});
-                }
-                function evidenceTypes(card){
-                  var types={},nodes=card.querySelectorAll('a,button,[role],img,svg,span,div');
-                  for(var i=0;i<nodes.length;i++){
-                    var n=nodes[i],sem=semanticOf(n),pd=profileData(n);
-                    if(sem)types[sem]=true;
-                    if(pd.id||pd.slug||pd.name)types.profile=true;
-                    if(pd.link)types.profileLink=true;
-                    if(n.tagName==='IMG')types.image=true;
-                  }
-                  if(norm(card.textContent||'').length>=8)types.text=true;
-                  return types;
-                }
-                function evidenceCount(card){return Object.keys(evidenceTypes(card)).length;}
-                function isReasonableCard(n){
-                  try{
-                    var r=n.getBoundingClientRect();
-                    return r.width>0&&r.height>0&&r.width<=1600&&r.height<=1800;
-                  }catch(e){return false;}
-                }
-                function findBlockTarget(el){
-                  if(!el)return null;
-                  var best=null,bestScore=-1,n=el;
-                  for(var d=0;n&&d<18;d++,n=n.parentElement){
-                    if(n===document.body||n===document.documentElement)break;
-                    if(!isReasonableCard(n))continue;
-                    var types=evidenceTypes(n),cnt=Object.keys(types).length;
-                    var score=cnt*25;
-                    if(types.profile)score+=10;
-                    if(types.profileLink)score+=8;
-                    if(types.time)score+=6;
-                    if(types.public)score+=6;
-                    if(types.image)score+=4;
-                    if(n.tagName==='ARTICLE'||attr(n,'role')==='article')score+=7;
-                    if(attr(n,'data-pagelet'))score+=4;
-                    var links=n.querySelectorAll('a,button,img,svg,[role="button"],[role="link"]').length;
-                    if(links>100)score-=25;else if(links>60)score-=10;
-                    // Prefer the smallest ancestor that contains a coherent evidence set.
-                    score-=d*1.2;
-                    if(cnt>=2&&score>bestScore){bestScore=score;best=n;}
-                  }
-                  return best||el;
-                }
-                function findEvidenceInCard(card,c){
-                  var ks=keysOf(c),found=0,nodes=card.querySelectorAll('a,button,[role],img,svg,span,div');
-                  for(var i=0;i<ks.length;i++){
-                    var k=ks[i],ok=false;
-                    for(var j=0;j<nodes.length&&!ok;j++)ok=one(nodes[j],c,k);
-                    if(ok)found++;
-                  }
-                  return {found:found,total:ks.length};
-                }
-                function sameCardMatch(el,c,mode){
-                  var card=findBlockTarget(el),r=findEvidenceInCard(card,c);
-                  if(!r.total)return false;
-                  if(mode==='OR')return r.found>=1;
-                  // Do not require all criteria on the same DOM node. For card rules,
-                  // identity/name/link/time/public/image can be distributed across descendants.
-                  if(r.total===1)return r.found===1;
-                  return r.found>=Math.min(2,r.total);
-                }
-                function applyTarget(target,rule,source,reason){
-                  if(!target||target===document.body||target===document.documentElement||target.__slimEBHidden)return;
-                  if(window.__slimEBDebug){
-                    try{
-                      target.setAttribute('data-slim-eb-debug',reason||'criteria');
-                      target.style.setProperty('outline','3px solid #ff2d55','important');
-                      target.setAttribute('title','SlimEB: '+(rule.label||'قاعدة')+' | '+(reason||'criteria')+' | أدلة: '+evidenceCount(target));
-                    }catch(e){}
-                  }
-                  target.style.setProperty('display','none','important');
-                  target.style.setProperty('visibility','hidden','important');
-                  target.style.setProperty('pointer-events','none','important');
-                  target.__slimEBHidden=true;
-                  if(rule.__logEnabled&&window.SlimEBLog){
-                    try{window.SlimEBLog.log(JSON.stringify({ruleId:rule.id,label:rule.label,tag:target.tagName,reason:reason||'criteria',evidence:evidenceCount(target)}));}catch(e){}
-                  }
+                    if(c.tag && el.tagName!==c.tag) return false;
+                    if(c.role){
+                      var r=el.getAttribute('role')||'';
+                      if(!r){ var ra=el.closest('[role]'); r=ra?ra.getAttribute('role'):''; }
+                      if(r!==c.role) return false;
+                    }
+                    if(c.aria || c.ariaList){
+                      var a=el.getAttribute('aria-label')||'';
+                      if(!a){ var aa=el.closest('[aria-label]'); a=aa?aa.getAttribute('aria-label'):''; }
+                      if(c.aria){
+                        if(c.ariaMode==='contains'){ if(a.indexOf(c.aria)===-1) return false; }
+                        else { if(a!==c.aria) return false; }
+                      }
+                      if(c.ariaList && c.ariaList.indexOf(a)===-1) return false;
+                    }
+                    if(c.testid || c.testidList){
+                      var t=el.getAttribute('data-testid')||'';
+                      if(!t){ var ta=el.closest('[data-testid]'); t=ta?ta.getAttribute('data-testid'):''; }
+                      if(c.testid && t!==c.testid) return false;
+                      if(c.testidList && c.testidList.indexOf(t)===-1) return false;
+                    }
+                    if(c.elId || c.elIdList){
+                      if(c.elId && el.id!==c.elId) return false;
+                      if(c.elIdList && c.elIdList.indexOf(el.id)===-1) return false;
+                    }
+                    if(c.profileId || c.profileSlug || c.profileIdList || c.profileSlugList){
+                      var link = el.tagName==='A'?el:el.closest('a');
+                      if(!link) return false;
+                      var href = link.getAttribute('href')||'';
+                      if(c.profileId && href.indexOf('profile.php?id='+c.profileId)===-1) return false;
+                      if(c.profileSlug && href.indexOf('/'+c.profileSlug)===-1) return false;
+                      if(c.profileIdList && !c.profileIdList.some(function(v){return href.indexOf('profile.php?id='+v)!==-1;})) return false;
+                      if(c.profileSlugList && !c.profileSlugList.some(function(v){return href.indexOf('/'+v)!==-1;})) return false;
+                    }
+                    if(c.text || c.textList){
+                      var txt=(el.textContent||'').trim();
+                      if(c.text){
+                        if(c.textMode==='contains'){ if(txt.indexOf(c.text)===-1) return false; }
+                        else { if(txt!==c.text) return false; }
+                      }
+                      if(c.textList && c.textList.indexOf(txt)===-1) return false;
+                    }
+                    if(c.shape){ if(shapeOf(el)!==c.shape) return false; }
+                    if(c.sizeBucket){ if(sizeBucketOf(el)!==c.sizeBucket) return false; }
+                    return true;
+                  }catch(e){ return false; }
                 }
                 function pass(){
                   try{
-                    var rules=window.__slimEBRules||[],candidates=document.querySelectorAll('a,button,[role],img,svg,span,div');
-                    for(var i=0;i<candidates.length;i++){
-                      var el=candidates[i];
-                      for(var j=0;j<rules.length;j++){
-                        var rule=rules[j];if(rule.enabled===false)continue;
-                        try{
-                          var c=rule.criteria||{},mode=rule.matchMode||'AND',matched=false,target=null,reason='criteria';
-                          if(rule.cardEvidenceMode==='SAME_CARD'){
-                            matched=sameCardMatch(el,c,mode);
-                            if(matched){target=findBlockTarget(el);reason='same-card-evidence';}
-                          }else if(rule.neighborCriteria&&rule.neighborCriteria.length){
-                            for(var q=0;q<rule.neighborCriteria.length;q++){
-                              if(ruleMatches(el,rule.neighborCriteria[q],'AND')){
-                                matched=true;target=findBlockTarget(el);reason='neighbor-evidence';break;
+                    var candidates = document.querySelectorAll('a,button,[role],img,svg');
+                    var rules = window.__slimEBRules || [];
+                    for (var i=0;i<candidates.length;i++){
+                      var el = candidates[i];
+                      if (el.__slimEBHidden) continue;
+                      for (var j=0;j<rules.length;j++){
+                        var rule = rules[j];
+                        if (rule.enabled===false) continue;
+                        try {
+                          if (ruleMatches(el, rule.criteria||{})) {
+                            // اقتراح 1: حظر الحاوية/الكرت الكامل بدل العنصر فقط
+                            var target = el;
+                            if (rule.expandToCard) {
+                              var card = el.closest('article,[role="article"],[data-pagelet]');
+                              if (card) target = card;
+                            }
+                            if (!target.__slimEBHidden) {
+                              target.style.setProperty('display','none','important');
+                              target.style.setProperty('pointer-events','none','important');
+                              target.__slimEBHidden = true;
+                              // اقتراح 4: سجل النشاط (يُرسل فقط أول مرة، وفقط لو مفعّل من الإعدادات)
+                              if (rule.__logEnabled && window.SlimEBLog) {
+                                try {
+                                  window.SlimEBLog.log(JSON.stringify({ruleId: rule.id, label: rule.label, tag: target.tagName}));
+                                } catch(e) {}
                               }
                             }
+                            el.__slimEBHidden = true;
+                            break;
                           }
-                          if(!matched&&ruleMatches(el,c,mode)){
-                            matched=true;target=rule.expandToCard?findBlockTarget(el):el;
-                          }
-                          if(!matched&&rule.neighborCriteria&&rule.neighborCriteria.length){
-                            // Legacy neighbor rules remain alternatives, but their target
-                            // is always the shared card rather than the neighbor node.
-                            for(var q2=0;q2<rule.neighborCriteria.length&&!matched;q2++){
-                              if(ruleMatches(el,rule.neighborCriteria[q2],'AND')){
-                                matched=true;target=findBlockTarget(el);reason='neighbor-evidence';break;
-                              }
-                            }
-                          }
-                          if(matched){applyTarget(target,rule,el,reason);break;}
-                        }catch(e){}
+                        } catch(e) {}
                       }
                     }
                   }catch(e){}
                 }
                 pass();
-                if(window.__slimEBObserver){try{window.__slimEBObserver.disconnect();}catch(e){}}
-                window.__slimEBObserver=new MutationObserver(function(){
-                  clearTimeout(window.__slimEBTimer);window.__slimEBTimer=setTimeout(pass,140);
+                if (window.__slimEBObserver) { try{ window.__slimEBObserver.disconnect(); }catch(e){} }
+                window.__slimEBObserver = new MutationObserver(function(){
+                  clearTimeout(window.__slimEBTimer);
+                  window.__slimEBTimer = setTimeout(pass, 150);
                 });
-                window.__slimEBObserver.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class','aria-label','data-testid','title','alt','href']});
-                clearInterval(window.__slimEBWatchdog);window.__slimEBWatchdog=setInterval(pass,800);
-              }catch(e){}
+                window.__slimEBObserver.observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['style','class']});
+                clearInterval(window.__slimEBWatchdog);
+                window.__slimEBWatchdog = setInterval(pass, 1000);
+              } catch(e) {}
             })();
         """.trimIndent()
     }
@@ -2768,20 +2632,6 @@ class MainActivity : Activity() {
         purgeExpiredElementBlockRules() // اقتراح 2: تنظيف القواعد المؤقتة المنتهية
         val currentUrl = web.url ?: return
         val all = elementBlockRulesJson()
-        // Migrate the old "similar" rules created by the previous version. Those rules
-        // stored tag+role+shape+size as one AND expression, which made matching narrower
-        // when more selectors were selected. They are now explicitly OR rules.
-        var legacyChanged = false
-        for (i in 0 until all.length()) {
-            val o = all.optJSONObject(i) ?: continue
-            if (!o.has("matchMode")) {
-                val c = o.optJSONObject("criteria") ?: continue
-                val structural = listOf("tag","role","shape","sizeBucket").count { c.has(it) }
-                val identity = listOf("profileId","profileSlug","testid","elId","text","aria").any { c.has(it) }
-                if (structural >= 3 && !identity) { o.put("matchMode", "OR"); legacyChanged = true }
-            }
-        }
-        if (legacyChanged) saveElementBlockRulesJson(all)
         val active = org.json.JSONArray()
         val logEnabled = ebFeat("log")
         for (i in 0 until all.length()) {
@@ -2789,7 +2639,6 @@ class MainActivity : Activity() {
             if (!o.optBoolean("enabled", true)) continue
             if (!elementBlockRuleMatchesScope(o, currentUrl)) continue // اقتراح 3: نطاق/استثناء الرابط
             o.put("__logEnabled", logEnabled)
-            o.put("__debugEnabled", ebFeat("debug", false))
             active.put(o)
         }
         if (active.length() == 0) return
@@ -2876,209 +2725,6 @@ class MainActivity : Activity() {
             .show()
     }
 
-    // تعديل قاعدة عنصر محظور موجودة بدون حذفها وإعادة التقاط العنصر من الصفر.
-    // يحتفظ بنفس id حتى لا تتحول العملية إلى قاعدة جديدة، ويسمح بتعديل جميع
-    // الخصائص التي يعتمد عليها محرك الحظر: الاسم، التفعيل، نمط المطابقة، الكرت
-    // الكامل، المدة، النطاق، المعايير الأساسية والمحددات المجاورة.
-    private fun editElementBlockRule(existing: JSONObject, onDone: () -> Unit) {
-        val id = existing.optString("id", UUID.randomUUID().toString())
-        val form = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(24, 12, 24, 8)
-        }
-
-        val nameInput = EditText(this).apply {
-            hint = "اسم القاعدة"
-            setText(existing.optString("label", "عنصر"))
-        }
-        form.addView(nameInput)
-
-        val enabled = Switch(this).apply {
-            text = "تفعيل القاعدة"
-            isChecked = existing.optBoolean("enabled", true)
-        }
-        form.addView(enabled)
-
-        val matchLabel = TextView(this).apply {
-            text = "طريقة المطابقة:"
-            setPadding(0, 12, 0, 4)
-        }
-        form.addView(matchLabel)
-        val matchSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                listOf("AND — كل المحددات الأساسية", "OR — أي محدد يكفي"))
-            setSelection(if (existing.optString("matchMode", "AND") == "OR") 1 else 0)
-        }
-        form.addView(matchSpinner)
-
-        val cardMode = Switch(this).apply {
-            text = "حظر الكرت/المنشور الكامل"
-            isChecked = existing.optBoolean("expandToCard", false)
-        }
-        form.addView(cardMode)
-
-        val durationLabel = TextView(this).apply {
-            text = "المدة:"
-            setPadding(0, 12, 0, 4)
-        }
-        form.addView(durationLabel)
-        val now = System.currentTimeMillis()
-        val expiresAt = existing.optLong("expiresAt", 0L)
-        val durationOptions = listOf(
-            "دائم" to 0L,
-            "24 ساعة من الآن" to 86_400_000L,
-            "7 أيام من الآن" to 604_800_000L,
-            "30 يومًا من الآن" to 2_592_000_000L,
-            "الإبقاء على المدة الحالية" to -1L
-        )
-        val durationSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                durationOptions.map { it.first })
-            setSelection(if (expiresAt > now) 4 else 0)
-        }
-        form.addView(durationSpinner)
-
-        val scopeLabel = TextView(this).apply {
-            text = "نطاق تطبيق القاعدة:"
-            setPadding(0, 12, 0, 4)
-        }
-        form.addView(scopeLabel)
-        val scopeSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                listOf("كل الصفحات", "فقط الرابط المحدد", "كل الصفحات ما عدا الرابط المحدد"))
-            setSelection(when (existing.optString("urlScope", "all")) {
-                "only" -> 1
-                "except" -> 2
-                else -> 0
-            })
-        }
-        form.addView(scopeSpinner)
-        val urlInput = EditText(this).apply {
-            hint = "الرابط/النمط"
-            setText(existing.optString("urlPattern", ""))
-        }
-        form.addView(urlInput)
-
-        val criteriaLabel = TextView(this).apply {
-            text = "المحددات الأساسية (JSON):"
-            setPadding(0, 12, 0, 4)
-        }
-        form.addView(criteriaLabel)
-        val criteriaInput = EditText(this).apply {
-            setText(existing.optJSONObject("criteria")?.toString() ?: "{}")
-            minLines = 5
-            gravity = Gravity.TOP
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            hint = "مثال: {\"semantic\":\"time\"}"
-        }
-        form.addView(criteriaInput)
-
-        val neighborsLabel = TextView(this).apply {
-            text = "المحددات المجاورة (JSON Array):"
-            setPadding(0, 12, 0, 4)
-        }
-        form.addView(neighborsLabel)
-        val neighborsInput = EditText(this).apply {
-            setText(existing.optJSONArray("neighborCriteria")?.toString() ?: "[]")
-            minLines = 5
-            gravity = Gravity.TOP
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            hint = "مثال: [{\"semantic\":\"time\"},{\"semantic\":\"public\"}]"
-        }
-        form.addView(neighborsInput)
-
-        form.addView(TextView(this).apply {
-            text = "ملاحظة: تعديل المحددات لا ينشئ قاعدة جديدة؛ يتم تحديث نفس القاعدة بنفس المعرّف. بعد الحفظ ستُعاد الصفحة لتطبيق التغيير، خصوصًا عند تعطيل القاعدة حتى يعود العنصر للظهور."
-            setPadding(0, 12, 0, 4)
-            setTextColor(Color.GRAY)
-            textSize = 12f
-        })
-
-        val scroll = ScrollView(this).apply { addView(form) }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("تعديل العنصر المحظور")
-            .setView(scroll)
-            .setNegativeButton("إلغاء", null)
-            .setPositiveButton("حفظ التعديل", null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val label = nameInput.text.toString().trim().ifEmpty { "عنصر" }
-                val criteria = try { JSONObject(criteriaInput.text.toString().trim()) }
-                catch (_: Exception) {
-                    notifyUser("خطأ: المحددات الأساسية ليست JSON صالحًا")
-                    return@setOnClickListener
-                }
-                val neighbors = try { org.json.JSONArray(neighborsInput.text.toString().trim()) }
-                catch (_: Exception) {
-                    notifyUser("خطأ: المحددات المجاورة ليست JSON Array صالحًا")
-                    return@setOnClickListener
-                }
-
-                val updated = JSONObject(existing.toString())
-                updated.put("id", id)
-                updated.put("label", label)
-                updated.put("enabled", enabled.isChecked)
-                updated.put("criteria", criteria)
-                updated.put("matchMode", if (matchSpinner.selectedItemPosition == 1) "OR" else "AND")
-                if (cardMode.isChecked) updated.put("expandToCard", true) else updated.remove("expandToCard")
-
-                val durationChoice = durationOptions.getOrNull(durationSpinner.selectedItemPosition)?.second ?: 0L
-                when {
-                    durationChoice == -1L -> { /* إبقاء expiresAt كما هو */ }
-                    durationChoice == 0L -> updated.remove("expiresAt")
-                    else -> updated.put("expiresAt", System.currentTimeMillis() + durationChoice)
-                }
-
-                val scope = when (scopeSpinner.selectedItemPosition) {
-                    1 -> "only"
-                    2 -> "except"
-                    else -> "all"
-                }
-                if (scope == "all") {
-                    updated.remove("urlScope")
-                    updated.remove("urlPattern")
-                } else {
-                    val pattern = urlInput.text.toString().trim()
-                    if (pattern.isEmpty()) {
-                        notifyUser("اكتب الرابط/النمط أولًا")
-                        return@setOnClickListener
-                    }
-                    updated.put("urlScope", scope)
-                    updated.put("urlPattern", pattern)
-                }
-
-                if (neighbors.length() > 0) updated.put("neighborCriteria", neighbors)
-                else updated.remove("neighborCriteria")
-
-                val arr = elementBlockRulesJson()
-                var replaced = false
-                for (i in 0 until arr.length()) {
-                    val old = arr.optJSONObject(i)
-                    if (old?.optString("id") == id) {
-                        arr.put(i, updated)
-                        replaced = true
-                        break
-                    }
-                }
-                if (!replaced) arr.put(updated)
-                saveElementBlockRulesJson(arr)
-                dialog.dismiss()
-                // القواعد القديمة قد تكون وضعت inline styles لا يمكن للمحرك الجديد
-                // إزالتها بأمان. إعادة التحميل هي الطريقة النظيفة لإظهار العنصر عند
-                // تعطيل القاعدة، وتضمن كذلك تطبيق المحددات الجديدة من الصفر.
-                web.reload()
-                notifyUser("تم تعديل القاعدة وإعادة تطبيقها")
-                onDone()
-            }
-        }
-        dialog.show()
-    }
-
     private fun openElementBlockRulesManager() {
         val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 16, 24, 8) }
         outer.addView(TextView(this).apply {
@@ -3147,9 +2793,6 @@ class MainActivity : Activity() {
                     if (o.optBoolean("expandToCard", false)) extras.add("كرت كامل")
                     if (o.optLong("expiresAt", 0L) > 0L) extras.add("مؤقت")
                     if (o.optString("urlScope", "all") != "all") extras.add("نطاق محدد")
-                    if (o.optString("matchMode", "AND") == "OR") extras.add("تشابه OR")
-                    val nCount = o.optJSONArray("neighborCriteria")?.length() ?: 0
-                    if (nCount > 0) extras.add("$nCount محددات مجاورة")
                     val extraTxt = if (extras.isNotEmpty()) " [${extras.joinToString(", ")}]" else ""
                     val labelText = TextView(this).apply {
                         text = "${if (isEnabled) "✓" else "○"} ${o.optString("label", "عنصر")}$extraTxt\nمعايير: ${criteriaKeys.joinToString(" + ")}"
@@ -3169,10 +2812,6 @@ class MainActivity : Activity() {
                         applyElementBlockRules()
                         refresh()
                     }
-                    val editBtn = Button(this).apply { text = "تعديل" }
-                    editBtn.setOnClickListener {
-                        editElementBlockRule(o) { refresh() }
-                    }
                     val deleteBtn = Button(this).apply { text = "حذف" }
                     deleteBtn.setOnClickListener {
                         val arr = elementBlockRulesJson(); val out = org.json.JSONArray()
@@ -3184,7 +2823,7 @@ class MainActivity : Activity() {
                         notifyUser("تم الحذف — حدّث الصفحة لإرجاع العنصر للظهور")
                         refresh()
                     }
-                    btnCol.addView(toggleBtn); btnCol.addView(editBtn); btnCol.addView(deleteBtn)
+                    btnCol.addView(toggleBtn); btnCol.addView(deleteBtn)
                     row.addView(labelText); row.addView(btnCol)
                     listBox.addView(row)
                     if (idx < sorted.size - 1) {

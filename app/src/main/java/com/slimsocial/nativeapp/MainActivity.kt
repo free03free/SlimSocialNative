@@ -2794,7 +2794,7 @@ class MainActivity : Activity() {
                     if (o.optLong("expiresAt", 0L) > 0L) extras.add("مؤقت")
                     if (o.optString("urlScope", "all") != "all") extras.add("نطاق محدد")
                     val extraTxt = if (extras.isNotEmpty()) " [${extras.joinToString(", ")}]" else ""
-                    val text = TextView(this).apply {
+                    val labelText = TextView(this).apply {
                         text = "${if (isEnabled) "✓" else "○"} ${o.optString("label", "عنصر")}$extraTxt\nمعايير: ${criteriaKeys.joinToString(" + ")}"
                         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                         setPadding(0, 4, 8, 4)
@@ -2824,7 +2824,7 @@ class MainActivity : Activity() {
                         refresh()
                     }
                     btnCol.addView(toggleBtn); btnCol.addView(deleteBtn)
-                    row.addView(text); row.addView(btnCol)
+                    row.addView(labelText); row.addView(btnCol)
                     listBox.addView(row)
                     if (idx < sorted.size - 1) {
                         listBox.addView(View(this).apply {

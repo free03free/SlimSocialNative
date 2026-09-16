@@ -55,6 +55,20 @@ class MainActivity : Activity() {
     // وضع الالتقاط: عمدًا غير محفوظ بالـ prefs، يرجع false تلقائيًا عند إعادة فتح
     // التطبيق حتى ما يفضلش شغّال بالخطأ. الحظر الفعلي (القواعد المحفوظة) دائم دائمًا.
     @Volatile private var pickerModeActive = false
+
+    // نظام صارم لضمان بقاء الحظر شغّال دائمًا: إعادة تطبيق دورية مستقلة تمامًا
+    // عن أحداث تحميل الصفحة (SPA navigation قد لا يُطلقها دائمًا)، فحتى لو صار
+    // خطأ أو حالة غير متوقعة، خلال 4 ثواني بالأكثر يرجع الحظر يشتغل من جديد.
+    private val elementBlockHandler = Handler(Looper.getMainLooper())
+    @Volatile private var elementBlockWatchdogRunning = false
+    private val elementBlockTick = object : Runnable {
+        override fun run() {
+            if (elementBlockWatchdogRunning) {
+                applyElementBlockRules()
+                elementBlockHandler.postDelayed(this, 4000)
+            }
+        }
+    }
     private val usageHandler = Handler(Looper.getMainLooper())
     private var usageRunning = false
 
@@ -82,6 +96,16 @@ class MainActivity : Activity() {
                 runOnUiThread { showPickerConfirmDialog(dataJson) }
             }
         }, "SlimPicker")
+        web.addJavascriptInterface(object {
+            @JavascriptInterface fun log(dataJson: String) {
+                runOnUiThread { recordElementBlockLog(dataJson) }
+            }
+        }, "SlimEBLog")
+        web.addJavascriptInterface(object {
+            @JavascriptInterface fun result(count: Int) {
+                runOnUiThread { notifyUser("🧪 نتيجة الاختبار: طابقت القاعدة $count عنصر بالصفحة الحالية") }
+            }
+        }, "SlimEBTest")
         web.settings.domStorageEnabled = true
         web.settings.userAgentString = WebSettings.getDefaultUserAgent(this).replace("; wv", "").replace("wv;", "")
         // Native pinch-zoom as an extra layer; the real guarantee that zoom works even
@@ -263,6 +287,7 @@ class MainActivity : Activity() {
             override fun onPageFinished(v: WebView, url: String) {
                 if (!isAuth(url)) {
                     applyControls(); applyCustomRulesDelayed()
+                    applyElementBlockRules()
                     if (pickerModeActive) applyElementPicker(true)
                     if (restrictedCustomPageUrl != null && isMediaExceptionAllowed(url, "image")) {
                         installRestrictedImageTouchLayer()
@@ -336,12 +361,16 @@ class MainActivity : Activity() {
         if (checkDailyLimitExceeded()) { showLimitReachedScreen(); return }
         usageRunning = true
         usageHandler.post(usageTick)
+        elementBlockWatchdogRunning = true
+        elementBlockHandler.post(elementBlockTick)
     }
 
     override fun onPause() {
         super.onPause()
         usageRunning = false
         usageHandler.removeCallbacksAndMessages(null)
+        elementBlockWatchdogRunning = false
+        elementBlockHandler.removeCallbacksAndMessages(null)
         CookieManager.getInstance().flush()
     }
 
@@ -1333,8 +1362,11 @@ class MainActivity : Activity() {
             notifyUser(if (value) "وضع الالتقاط مفعّل — المس أي عنصر" else "تم إيقاف وضع الالتقاط (المحظور يبقى محظورًا)")
         }
         advanced.addView(swPicker)
+        val openManagerBtn = Button(this).apply { text = "📋 إدارة العناصر المحظورة (منفصلة عن قواعد JS/CSS)" }
+        openManagerBtn.setOnClickListener { openElementBlockRulesManager() }
+        advanced.addView(openManagerBtn)
         advanced.addView(TextView(this).apply {
-            text = "العناصر المحظورة بهذا الوضع تظهر لاحقًا بقائمة \"إدارة قواعد JS/CSS\" باسم يبدأ بـ 🎯"
+            text = "هذه قائمة مستقلة بالكامل عن \"إدارة قواعد JS/CSS\" اليدوية، خاصة فقط بالعناصر اللي حظرتها عبر وضع الالتقاط."
             setPadding(4, 0, 4, 8)
             textSize = 12f
         })
@@ -2000,49 +2032,106 @@ class MainActivity : Activity() {
             hl.style.width=r.width+'px'; hl.style.height=r.height+'px';
           }
 
+          function pointXY(e){
+            if (e.touches && e.touches.length) return {x:e.touches[0].clientX, y:e.touches[0].clientY};
+            if (e.changedTouches && e.changedTouches.length) return {x:e.changedTouches[0].clientX, y:e.changedTouches[0].clientY};
+            return {x:e.clientX, y:e.clientY};
+          }
+
           window.__slimPickerMove = function(e){
-            var t = document.elementFromPoint(
-              (e.touches?e.touches[0].clientX:e.clientX),
-              (e.touches?e.touches[0].clientY:e.clientY)
-            );
-            showHL(t);
+            var p = pointXY(e);
+            showHL(document.elementFromPoint(p.x, p.y));
           };
 
+          // === الإصلاح 1: التمييز بين التمرير واللمسة الفعلية ===
+          var __slimDownX = 0, __slimDownY = 0, __slimMoved = false;
+          window.__slimPickerDown = function(e){
+            var p = pointXY(e);
+            __slimDownX = p.x; __slimDownY = p.y; __slimMoved = false;
+            // لا نستدعي preventDefault هنا نهائيًا، حتى يبقى التمرير طبيعيًا
+          };
+          window.__slimPickerTrack = function(e){
+            window.__slimPickerMove(e);
+            var p = pointXY(e);
+            if (Math.abs(p.x - __slimDownX) > 10 || Math.abs(p.y - __slimDownY) > 10) __slimMoved = true;
+          };
+          // === نهاية الإصلاح 1 ===
+
+          function shapeOf(el){
+            try{
+              var r=el.getBoundingClientRect();
+              if(r.width<1||r.height<1) return null;
+              var cs=getComputedStyle(el); var br=cs.borderRadius||'';
+              var minSide=Math.min(r.width,r.height);
+              var isRound=/50%/.test(br)||(parseFloat(br)>=minSide/2-2);
+              if(isRound) return 'round';
+              return (Math.abs(r.width-r.height)<=6)?'square':'rect';
+            }catch(e){return null;}
+          }
+          function sizeBucketOf(el){
+            try{
+              var r=el.getBoundingClientRect(); var big=Math.max(r.width,r.height);
+              if(big<=0) return null;
+              return big<=84?'small':(big<=300?'medium':'large');
+            }catch(e){return null;}
+          }
+
+          // === النظام الجديد: نجمع كل الإشارات المتاحة دفعة وحدة، بدل ما نختار
+          // إشارة واحدة فقط. المستخدم بعدين يختار أي مزيج منها يناسب قصده بالضبط. ===
           function buildInfo(el){
-            var out = {tag: el.tagName, kind:'tag'};
-            var cur = el, depth = 0;
-            while (cur && depth < 5) {
-              var a2 = cur.getAttribute && cur.getAttribute('aria-label');
-              if (a2) { out.kind='aria'; out.value=a2; out.label=a2; return out; }
-              if (cur.tagName === 'A') {
-                var href = cur.getAttribute('href') || '';
-                var m = href.match(/profile\.php\?id=(\d+)/);
-                if (m) { out.kind='profile-id'; out.value=m[1]; out.label='بروفايل #'+m[1]; return out; }
-                var m2 = href.match(/^\/?([A-Za-z0-9_.\-]{2,})\/?(\?|${'$'})/);
-                if (m2 && !/^(groups|watch|reel|photo|posts|permalink|marketplace|events)${'$'}/i.test(m2[1])) {
-                  out.kind='profile-slug'; out.value=m2[1]; out.label='بروفايل/صفحة: '+m2[1]; return out;
-                }
+            var out = {tag: el.tagName};
+            out.w = Math.round(el.getBoundingClientRect().width);
+            out.h = Math.round(el.getBoundingClientRect().height);
+            out.shape = shapeOf(el);
+            out.sizeBucket = sizeBucketOf(el);
+
+            var role = el.getAttribute('role');
+            if (!role) { var ra = el.closest('[role]'); role = ra ? ra.getAttribute('role') : null; }
+            if (role) out.role = role;
+
+            var aria = el.getAttribute('aria-label');
+            if (!aria) { var aa = el.closest('[aria-label]'); aria = aa ? aa.getAttribute('aria-label') : null; }
+            if (aria) out.aria = aria;
+
+            var tid = el.getAttribute('data-testid');
+            if (!tid) { var ta = el.closest('[data-testid]'); tid = ta ? ta.getAttribute('data-testid') : null; }
+            if (tid) out.testid = tid;
+
+            if (el.id) out.elId = el.id;
+
+            var link = el.tagName === 'A' ? el : el.closest('a');
+            if (link) {
+              var href = link.getAttribute('href') || '';
+              var m = href.match(/profile\.php\?id=(\d+)/);
+              if (m) out.profileId = m[1];
+              var m2 = href.match(/^\/?([A-Za-z0-9_.\-]{2,})\/?(\?|${'$'})/);
+              if (m2 && !/^(groups|watch|reel|photo|posts|permalink|marketplace|events|help|settings|login)${'$'}/i.test(m2[1])) {
+                out.profileSlug = m2[1];
               }
-              cur = cur.parentElement; depth++;
             }
-            var txt = (el.textContent||'').trim().replace(/\s+/g,' ').slice(0,40);
-            if (txt) { out.kind='text'; out.value=txt; out.label=txt; return out; }
-            out.label = el.tagName;
+
+            var txt = (el.textContent||'').trim().replace(/\s+/g,' ').slice(0,60);
+            if (txt) out.text = txt;
+
+            out.label = out.aria || (out.profileId ? ('بروفايل #'+out.profileId) : null) ||
+              (out.profileSlug ? ('بروفايل: '+out.profileSlug) : null) || out.testid || out.text || el.tagName;
             return out;
           }
 
           window.__slimPickerTap = function(e){
-            var x = e.touches ? e.touches[0].clientX : e.clientX;
-            var y = e.touches ? e.touches[0].clientY : e.clientY;
-            var el = document.elementFromPoint(x, y);
+            if (__slimMoved) return; // كانت تمرير، مو ضغطة — نتجاهلها بدون أي تأثير
+            var p = pointXY(e);
+            var el = document.elementFromPoint(p.x, p.y);
             if (!el || el === hl || el === tip || tip.contains(el)) return;
             e.preventDefault(); e.stopPropagation();
             var info = buildInfo(el);
             if (window.SlimPicker) window.SlimPicker.pick(JSON.stringify(info));
           };
 
-          document.addEventListener('pointermove', window.__slimPickerMove, true);
-          document.addEventListener('pointerdown', window.__slimPickerTap, true);
+          document.addEventListener('pointerdown', window.__slimPickerDown, true);
+          document.addEventListener('pointermove', window.__slimPickerTrack, true);
+          document.addEventListener('pointerup', window.__slimPickerTap, true);
+          // احتياطي لأجهزة/متصفحات ما تدعم pointer events بشكل كامل
           document.addEventListener('click', window.__slimPickerTap, true);
         })();
     """.trimIndent()
@@ -2065,87 +2154,702 @@ class MainActivity : Activity() {
         web.evaluateJavascript(if (activate) pickerActivateJs() else pickerDeactivateJs(), null)
     }
 
+    // ========================================================================
+    // نظام العناصر المحظورة (Element Block Rules) — تخزين منفصل تمامًا عن
+    // "قواعد JS/CSS اليدوية" (custom_rules_json)، بمعايير مطابقة متعددة قابلة
+    // للدمج (AND)، ومحرك تطبيق مستقل ومقوّى ضد التوقف (انظر applyElementBlockRules).
+    // ========================================================================
+    private fun elementBlockRulesJson(): org.json.JSONArray {
+        val raw = prefs.getString("element_block_rules_json", "[]") ?: "[]"
+        return try { org.json.JSONArray(raw) } catch (_: Exception) { org.json.JSONArray() }
+    }
+
+    private fun saveElementBlockRulesJson(arr: org.json.JSONArray) {
+        prefs.edit().putString("element_block_rules_json", arr.toString()).apply()
+    }
+
+    // ------------------------------------------------------------------
+    // مفاتيح تحكم مستقلة لكل ميزة إضافية — كل وحدة تقدر توقفها لحالها
+    // بدون ما تأثر على البقية، من إعدادات "🎯 ميزات نظام الحظر المتقدم"
+    // ------------------------------------------------------------------
+    private fun ebFeat(key: String, default: Boolean = true): Boolean = prefs.getBoolean("eb_feat_$key", default)
+    private val EB_MAX_RECOMMENDED_RULES = 100
+
+    private fun elementBlockLogJson(): org.json.JSONArray {
+        val raw = prefs.getString("element_block_log_json", "[]") ?: "[]"
+        return try { org.json.JSONArray(raw) } catch (_: Exception) { org.json.JSONArray() }
+    }
+
+    private fun recordElementBlockLog(dataJson: String) {
+        if (!ebFeat("log")) return
+        val entry = try { JSONObject(dataJson) } catch (_: Exception) { return }
+        entry.put("time", System.currentTimeMillis())
+        val a = elementBlockLogJson()
+        val out = org.json.JSONArray()
+        out.put(entry)
+        for (i in 0 until minOf(a.length(), 19)) { out.put(a.opt(i)) }
+        prefs.edit().putString("element_block_log_json", out.toString()).apply()
+    }
+
+    private fun openElementBlockFeatureSettings() {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 16, 24, 8) }
+        fun featSwitch(key: String, title: String, default: Boolean = true) {
+            val sw = Switch(this).apply { text = title; isChecked = ebFeat(key, default); setPadding(4, 8, 4, 8) }
+            sw.setOnCheckedChangeListener { _, value -> prefs.edit().putBoolean("eb_feat_$key", value).apply() }
+            container.addView(sw)
+        }
+        featSwitch("cardmode", "خيار \"حظر الكرت كامل\" عند الالتقاط")
+        featSwitch("duration", "خيار \"حظر مؤقت (24 ساعة / 7 أيام)\"")
+        featSwitch("scope", "خيار \"نطاق برابط محدد / استثناء رابط\"")
+        featSwitch("log", "سجّل آخر 20 عملية إخفاء فعلية")
+        featSwitch("conflict", "تنبيه عند تشابه قاعدة جديدة مع قاعدة موجودة")
+        featSwitch("test", "زر \"اختبار القاعدة الآن\" قبل الحفظ")
+        featSwitch("cap_warning", "تحذير عند تجاوز عدد القواعد 100 (يؤثر بالأداء)")
+        featSwitch("merge", "أداة \"دمج القواعد المتشابهة\" بقائمة الإدارة")
+        AlertDialog.Builder(this).setTitle("🎯 ميزات نظام الحظر المتقدم")
+            .setView(ScrollView(this).apply { addView(container) })
+            .setNegativeButton("إغلاق", null)
+            .show()
+    }
+
+    private fun purgeExpiredElementBlockRules() {
+        val a = elementBlockRulesJson()
+        val now = System.currentTimeMillis()
+        val out = org.json.JSONArray()
+        var changed = false
+        for (i in 0 until a.length()) {
+            val o = a.optJSONObject(i) ?: continue
+            val expiresAt = o.optLong("expiresAt", 0L)
+            if (expiresAt in 1 until now) { changed = true; continue }
+            out.put(o)
+        }
+        if (changed) saveElementBlockRulesJson(out)
+    }
+
+    private fun elementBlockRuleMatchesScope(o: JSONObject, url: String): Boolean {
+        if (!ebFeat("scope")) return true
+        val urlScope = o.optString("urlScope", "all")
+        val pattern = o.optString("urlPattern", "").trim()
+        if (urlScope == "all" || pattern.isEmpty()) return true
+        val matches = try { matchesConfiguredUrlRule(url, pattern) } catch (_: Exception) { false }
+        return if (urlScope == "except") !matches else matches
+    }
+
+    private fun canonicalCriteria(c: JSONObject): String {
+        val keys = mutableListOf<String>()
+        val it = c.keys()
+        while (it.hasNext()) keys.add(it.next())
+        keys.sort()
+        return keys.joinToString("|") { "$it=" + c.opt(it).toString() }
+    }
+
+    private fun shapeLabelAr(s: String) = when (s) { "round" -> "دائري"; "square" -> "مربّع"; else -> "مستطيل" }
+    private fun sizeLabelAr(s: String) = when (s) { "small" -> "صغير"; "medium" -> "متوسط"; else -> "كبير" }
+
     private fun showPickerConfirmDialog(dataJson: String) {
         val info = try { JSONObject(dataJson) } catch (_: Exception) { return }
-        val kind = info.optString("kind", "tag")
-        val value = info.optString("value", "")
-        val label = info.optString("label", info.optString("tag", "عنصر"))
+        fun str(key: String): String? {
+            if (!info.has(key) || info.isNull(key)) return null
+            val v = info.optString(key, "")
+            return if (v.isEmpty()) null else v
+        }
+        val autoLabel = str("label") ?: str("tag") ?: "عنصر"
+        // اقتراح 7: تسمية تلقائية أذكى (مختصرة + قابلة للتعديل)
+        val smartDefaultName = (autoLabel.take(24) + (if (autoLabel.length > 24) "…" else "")) +
+            (str("tag")?.let { " ($it)" } ?: "")
 
-        val message = when (kind) {
-            "aria" -> "سيتم حظر كل عنصر بهذا الوصف بالضبط:\n\"$value\"\n(يشمل كل مكان يظهر فيه بنفس الاسم عبر فيسبوك)"
-            "profile-id", "profile-slug" -> "سيتم حظر كل رابط/عنصر يشير إلى هذا الحساب:\n\"$value\"\n(يخفي الروابط والصور المرتبطة به في كل الصفحات)"
-            "text" -> "سيتم حظر كل عنصر نصه مطابق تمامًا لـ:\n\"$value\""
-            else -> "هذا العنصر ما عنده وصف أو رابط ثابت يمكن الاعتماد عليه، الحظر هنا أقل دقة وقد يتوقف عن العمل إذا غيّر فيسبوك تصميم الصفحة."
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 16, 24, 8) }
+
+        container.addView(TextView(this).apply { text = "اسم القاعدة (تقدر تعدّله):"; setPadding(0, 0, 0, 4) })
+        val nameInput = EditText(this).apply { setText(smartDefaultName) }
+        container.addView(nameInput)
+
+        container.addView(TextView(this).apply {
+            text = "اختر أي خصائص تعتمد عليها بالحظر — كل ما تحدده لازم يتطابق كلّه بنفس الوقت (AND):"
+            setPadding(0, 12, 0, 12)
+        })
+
+        val checks = LinkedHashMap<String, CheckBox>()
+        fun addCheck(key: String, title: String, defaultOn: Boolean) {
+            val cb = CheckBox(this).apply { text = title; isChecked = defaultOn }
+            checks[key] = cb
+            container.addView(cb)
+        }
+
+        val hasIdentity = str("profileId") != null || str("profileSlug") != null
+        str("profileId")?.let { addCheck("profileId", "معرّف الحساب الثابت (id: $it) — الأدق لحظر حساب بعينه", true) }
+        str("profileSlug")?.let { addCheck("profileSlug", "اسم رابط الحساب (/$it)", str("profileId") == null) }
+        str("aria")?.let { addCheck("aria", "الوصف النصي بالضبط: \"$it\"", !hasIdentity) }
+        str("testid")?.let { addCheck("testid", "معرّف داخلي مخفي (data-testid: $it)", !hasIdentity && str("aria") == null) }
+        str("elId")?.let { addCheck("elId", "معرّف id الثابت: $it", false) }
+        str("text")?.let { addCheck("text", "النص الظاهر بالضبط: \"$it\"", false) }
+        addCheck("tag", "نوع العنصر (${str("tag") ?: "?"})", false)
+        str("role")?.let { addCheck("role", "الدور الوظيفي (role=$it)", false) }
+        str("shape")?.let { addCheck("shape", "الشكل (${shapeLabelAr(it)})", false) }
+        str("sizeBucket")?.let { addCheck("sizeBucket", "الحجم التقريبي (${sizeLabelAr(it)})", false) }
+
+        val similarBtn = Button(this).apply {
+            text = "🎯 حظر كل عنصر مشابه (نفس النوع + الشكل + الحجم + الموضع، بدون تحديد هوية بعينها)"
+        }
+        similarBtn.setOnClickListener {
+            checks.forEach { (k, cb) -> cb.isChecked = (k == "tag" || k == "role" || k == "shape" || k == "sizeBucket") }
+            notifyUser("اخترت معايير التشابه — راجعها ثم اضغط حظر")
+        }
+        container.addView(similarBtn)
+
+        val exactBtn = Button(this).apply { text = "🔒 حظر هذا العنصر بالضبط فقط (أدق معرّف متاح)" }
+        exactBtn.setOnClickListener {
+            checks.forEach { (k, cb) -> cb.isChecked = (k == "profileId" || k == "profileSlug" || k == "aria" || k == "testid" || k == "elId") }
+            notifyUser("اخترت أدق معرّف متاح — راجعه ثم اضغط حظر")
+        }
+        container.addView(exactBtn)
+
+        container.addView(TextView(this).apply {
+            text = "ملاحظة: التشابه هنا هيكلي/بصري (نفس النوع والشكل والحجم والموضع)، مو تعرّف على الوجه/الصورة نفسها — فيسبوك ما يعطينا وصول لتحليل الصور."
+            textSize = 12f
+            setPadding(0, 8, 0, 8)
+        })
+
+        // اقتراح 1: حظر الكرت كامل بدل جزء منه فقط
+        var cardModeCb: CheckBox? = null
+        if (ebFeat("cardmode")) {
+            cardModeCb = CheckBox(this).apply {
+                text = "حظر الحاوية/الكرت الكامل حول هذا العنصر (مثال: بطاقة اقتراح كاملة) بدل هذا الجزء فقط"
+                isChecked = false
+            }
+            container.addView(cardModeCb)
+        }
+
+        // اقتراح 2: حظر مؤقت
+        var durationSpinner: Spinner? = null
+        val durationOptions = listOf("دائم" to 0L, "24 ساعة" to 86_400_000L, "7 أيام" to 604_800_000L, "30 يوم" to 2_592_000_000L)
+        if (ebFeat("duration")) {
+            container.addView(TextView(this).apply { text = "مدة الحظر:"; setPadding(0, 12, 0, 4) })
+            durationSpinner = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, durationOptions.map { it.first })
+            }
+            container.addView(durationSpinner)
+        }
+
+        // اقتراح 3: نطاق رابط / استثناء رابط
+        var scopeSpinner: Spinner? = null
+        var urlPatternInput: EditText? = null
+        if (ebFeat("scope")) {
+            container.addView(TextView(this).apply { text = "نطاق تطبيق القاعدة:"; setPadding(0, 12, 0, 4) })
+            val scopeOptions = listOf("كل صفحات فيسبوك" to "all", "فقط برابط محدد" to "only", "كل مكان ماعدا رابط محدد" to "except")
+            scopeSpinner = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, scopeOptions.map { it.first })
+            }
+            container.addView(scopeSpinner)
+            urlPatternInput = EditText(this).apply { hint = "جزء من الرابط (مثال: /groups/12345)" }
+            container.addView(urlPatternInput)
+        }
+
+        // اقتراح 6: اختبار القاعدة الآن (dry-run بدون إخفاء فعلي)
+        if (ebFeat("test")) {
+            val testBtn = Button(this).apply { text = "🧪 اختبار القاعدة الآن (بدون حفظ)" }
+            testBtn.setOnClickListener {
+                val testCriteria = JSONObject()
+                checks.forEach { (key, cb) -> if (cb.isChecked) putCriteriaKey(testCriteria, key, ::str) }
+                if (testCriteria.length() == 0) {
+                    notifyUser("اختر معيارًا واحدًا على الأقل للاختبار")
+                } else {
+                    web.evaluateJavascript(elementBlockDryRunJs(testCriteria), null)
+                }
+            }
+            container.addView(testBtn)
         }
 
         AlertDialog.Builder(this)
-            .setTitle("حظر: $label")
-            .setMessage(message)
+            .setTitle("حظر: $autoLabel")
+            .setView(ScrollView(this).apply { addView(container) })
             .setNegativeButton("إلغاء") { _, _ -> if (pickerModeActive) applyElementPicker(true) }
             .setPositiveButton("حظر") { _, _ ->
-                saveElementBlockRule(kind, value, label)
+                val criteria = JSONObject()
+                var anySelected = false
+                checks.forEach { (key, cb) ->
+                    if (cb.isChecked) { anySelected = true; putCriteriaKey(criteria, key, ::str) }
+                }
+                if (!anySelected) {
+                    notifyUser("اختر معيارًا واحدًا على الأقل")
+                } else {
+                    val finalLabel = nameInput.text.toString().trim().ifEmpty { autoLabel }
+                    val expandToCard = cardModeCb?.isChecked ?: false
+                    val durationMs = durationSpinner?.let { durationOptions.getOrNull(it.selectedItemPosition)?.second } ?: 0L
+                    val expiresAt = if (durationMs > 0L) System.currentTimeMillis() + durationMs else 0L
+                    val urlScope = when (scopeSpinner?.selectedItemPosition) { 1 -> "only"; 2 -> "except"; else -> "all" }
+                    val urlPattern = urlPatternInput?.text?.toString()?.trim() ?: ""
+                    saveElementBlockRuleAdvanced(criteria, finalLabel, expandToCard, expiresAt, urlScope, urlPattern)
+                }
                 if (pickerModeActive) applyElementPicker(true)
             }
             .show()
     }
 
-    private fun saveElementBlockRule(kind: String, value: String, label: String) {
-        val css: String
-        val js: String
-        when (kind) {
-            "aria" -> {
-                val escaped = value.replace("\\", "\\\\").replace("\"", "\\\"")
-                css = "[aria-label=\"$escaped\"]{display:none!important;}"
-                js = ""
-            }
-            "profile-id" -> {
-                css = "a[href*=\"profile.php?id=$value\"]{display:none!important;}"
-                js = ""
-            }
-            "profile-slug" -> {
-                val safe = value.replace("\"", "")
-                css = "a[href*=\"/$safe\"]{display:none!important;}"
-                js = ""
-            }
-            "text" -> {
-                val qtext = JSONObject.quote(value)
-                val safeKey = value.hashCode().toString().replace("-", "n")
-                css = ""
-                js = """
-                    (function(){
-                      if(window.__slimTextBlock_$safeKey) return;
-                      function pass(){
-                        document.querySelectorAll('[role="button"],button,a,span,div').forEach(function(e){
-                          if((e.textContent||'').trim()===$qtext){ e.style.setProperty('display','none','important'); }
-                        });
-                      }
-                      pass();
-                      var obs=new MutationObserver(function(){pass();});
-                      obs.observe(document.body,{childList:true,subtree:true});
-                      window.__slimTextBlock_$safeKey = true;
-                    })();
-                """.trimIndent()
-            }
-            else -> { css = ""; js = "" }
+    private fun putCriteriaKey(criteria: JSONObject, key: String, str: (String) -> String?) {
+        when (key) {
+            "profileId" -> criteria.put("profileId", str("profileId"))
+            "profileSlug" -> criteria.put("profileSlug", str("profileSlug"))
+            "aria" -> { criteria.put("aria", str("aria")); criteria.put("ariaMode", "exact") }
+            "testid" -> criteria.put("testid", str("testid"))
+            "elId" -> criteria.put("elId", str("elId"))
+            "text" -> { criteria.put("text", str("text")); criteria.put("textMode", "exact") }
+            "tag" -> criteria.put("tag", str("tag"))
+            "role" -> criteria.put("role", str("role"))
+            "shape" -> criteria.put("shape", str("shape"))
+            "sizeBucket" -> criteria.put("sizeBucket", str("sizeBucket"))
         }
-        if (css.isBlank() && js.isBlank()) { notifyUser("تعذّر تحديد قاعدة موثوقة لهذا العنصر"); return }
+    }
+
+    private fun saveElementBlockRuleAdvanced(
+        criteria: JSONObject,
+        label: String,
+        expandToCard: Boolean = false,
+        expiresAt: Long = 0L,
+        urlScope: String = "all",
+        urlPattern: String = ""
+    ) {
+        // اقتراح 10: تحذير عند تجاوز عدد القواعد الموصى به
+        val existing = elementBlockRulesJson()
+        if (ebFeat("cap_warning") && existing.length() >= EB_MAX_RECOMMENDED_RULES) {
+            notifyUser("⚠️ تنبيه: عندك ${existing.length()} قاعدة بالفعل — عدد كبير من القواعد يبطّئ التمرير")
+        }
+
+        // اقتراح 5: تنبيه تعارض/تشابه مع قاعدة موجودة
+        if (ebFeat("conflict")) {
+            val newSig = canonicalCriteria(criteria)
+            for (i in 0 until existing.length()) {
+                val o = existing.optJSONObject(i) ?: continue
+                val c = o.optJSONObject("criteria") ?: continue
+                if (canonicalCriteria(c) == newSig) {
+                    notifyUser("⚠️ ملاحظة: عندك قاعدة موجودة بنفس المعايير بالضبط (\"${o.optString("label")}\") — القاعدة الجديدة بتُحفظ بجانبها")
+                    break
+                }
+            }
+        }
 
         val o = JSONObject()
         o.put("id", UUID.randomUUID().toString())
-        o.put("name", "🎯 محظور: $label")
+        o.put("label", label)
         o.put("enabled", true)
-        o.put("scope", "all")
-        o.put("url", "")
-        o.put("priority", 0)
-        o.put("css", css)
-        o.put("js", js)
-
-        val a = customRulesJson()
+        o.put("createdAt", System.currentTimeMillis())
+        o.put("criteria", criteria)
+        if (expandToCard) o.put("expandToCard", true)
+        if (expiresAt > 0L) o.put("expiresAt", expiresAt)
+        if (urlScope != "all") { o.put("urlScope", urlScope); o.put("urlPattern", urlPattern) }
+        val a = elementBlockRulesJson()
         a.put(o)
-        saveCustomRulesJson(a)
-        prefs.edit().putBoolean("custom_rules_migrated", true).apply()
-        applyCustomRulesDelayed()
-        notifyUser("تم حظر \"$label\" بشكل دائم")
+        saveElementBlockRulesJson(a)
+        applyElementBlockRules()
+        notifyUser("تم حفظ قاعدة الحظر: $label")
+    }
+
+    // اقتراح 6: اختبار بدون حفظ ولا إخفاء فعلي — يعدّ فقط ويرجّع الرقم عبر SlimEBTest
+    private fun elementBlockDryRunJs(criteria: JSONObject): String {
+        val criteriaLiteral = criteria.toString()
+        return """
+            (function(){
+              try {
+                var c = $criteriaLiteral;
+                function shapeOf(el){
+                  try{
+                    var r=el.getBoundingClientRect();
+                    if(r.width<1||r.height<1) return null;
+                    var cs=getComputedStyle(el); var br=cs.borderRadius||'';
+                    var minSide=Math.min(r.width,r.height);
+                    var isRound=/50%/.test(br)||(parseFloat(br)>=minSide/2-2);
+                    if(isRound) return 'round';
+                    return (Math.abs(r.width-r.height)<=6)?'square':'rect';
+                  }catch(e){return null;}
+                }
+                function sizeBucketOf(el){
+                  try{
+                    var r=el.getBoundingClientRect(); var big=Math.max(r.width,r.height);
+                    if(big<=0) return null;
+                    return big<=84?'small':(big<=300?'medium':'large');
+                  }catch(e){return null;}
+                }
+                function ruleMatches(el, c){
+                  try{
+                    if(c.tag && el.tagName!==c.tag) return false;
+                    if(c.role){ var r=el.getAttribute('role')||''; if(!r){var ra=el.closest('[role]'); r=ra?ra.getAttribute('role'):'';} if(r!==c.role) return false; }
+                    if(c.aria){ var a=el.getAttribute('aria-label')||''; if(!a){var aa=el.closest('[aria-label]'); a=aa?aa.getAttribute('aria-label'):'';}
+                      if(c.ariaMode==='contains'){ if(a.indexOf(c.aria)===-1) return false; } else { if(a!==c.aria) return false; } }
+                    if(c.testid){ var t=el.getAttribute('data-testid')||''; if(!t){var ta=el.closest('[data-testid]'); t=ta?ta.getAttribute('data-testid'):'';} if(t!==c.testid) return false; }
+                    if(c.elId){ if(el.id!==c.elId) return false; }
+                    if(c.profileId || c.profileSlug){
+                      var link = el.tagName==='A'?el:el.closest('a'); if(!link) return false;
+                      var href = link.getAttribute('href')||'';
+                      if(c.profileId && href.indexOf('profile.php?id='+c.profileId)===-1) return false;
+                      if(c.profileSlug && href.indexOf('/'+c.profileSlug)===-1) return false;
+                    }
+                    if(c.text){ var txt=(el.textContent||'').trim();
+                      if(c.textMode==='contains'){ if(txt.indexOf(c.text)===-1) return false; } else { if(txt!==c.text) return false; } }
+                    if(c.shape){ if(shapeOf(el)!==c.shape) return false; }
+                    if(c.sizeBucket){ if(sizeBucketOf(el)!==c.sizeBucket) return false; }
+                    return true;
+                  }catch(e){ return false; }
+                }
+                var candidates = document.querySelectorAll('a,button,[role],img,svg');
+                var count = 0;
+                for (var i=0;i<candidates.length;i++){ if (ruleMatches(candidates[i], c)) count++; }
+                if (window.SlimEBTest) window.SlimEBTest.result(count);
+              } catch(e) { if (window.SlimEBTest) window.SlimEBTest.result(-1); }
+            })();
+        """.trimIndent()
+    }
+
+    // محرك التطبيق: يُبنى كسكربت واحد يحتوي القواعد كلها كنص JSON صالح مباشرة (بدون
+    // الحاجة لـ JSON.parse)، فيه مطابقة AND لكل معيار محدد، وتغليف try/catch حول كل
+    // قاعدة على حدة حتى لو قاعدة واحدة فيها خطأ ما توقف بقية القواعد. مراقبة مزدوجة:
+    // MutationObserver فوري + setInterval كشبكة أمان احتياطية مستقلة.
+    private fun elementBlockEngineJs(rulesArr: org.json.JSONArray): String {
+        val rulesLiteral = rulesArr.toString()
+        return """
+            (function(){
+              try {
+                window.__slimEBRules = $rulesLiteral;
+                function shapeOf(el){
+                  try{
+                    var r=el.getBoundingClientRect();
+                    if(r.width<1||r.height<1) return null;
+                    var cs=getComputedStyle(el); var br=cs.borderRadius||'';
+                    var minSide=Math.min(r.width,r.height);
+                    var isRound=/50%/.test(br)||(parseFloat(br)>=minSide/2-2);
+                    if(isRound) return 'round';
+                    return (Math.abs(r.width-r.height)<=6)?'square':'rect';
+                  }catch(e){return null;}
+                }
+                function sizeBucketOf(el){
+                  try{
+                    var r=el.getBoundingClientRect(); var big=Math.max(r.width,r.height);
+                    if(big<=0) return null;
+                    return big<=84?'small':(big<=300?'medium':'large');
+                  }catch(e){return null;}
+                }
+                function ruleMatches(el, c){
+                  try{
+                    if(c.tag && el.tagName!==c.tag) return false;
+                    if(c.role){
+                      var r=el.getAttribute('role')||'';
+                      if(!r){ var ra=el.closest('[role]'); r=ra?ra.getAttribute('role'):''; }
+                      if(r!==c.role) return false;
+                    }
+                    if(c.aria || c.ariaList){
+                      var a=el.getAttribute('aria-label')||'';
+                      if(!a){ var aa=el.closest('[aria-label]'); a=aa?aa.getAttribute('aria-label'):''; }
+                      if(c.aria){
+                        if(c.ariaMode==='contains'){ if(a.indexOf(c.aria)===-1) return false; }
+                        else { if(a!==c.aria) return false; }
+                      }
+                      if(c.ariaList && c.ariaList.indexOf(a)===-1) return false;
+                    }
+                    if(c.testid || c.testidList){
+                      var t=el.getAttribute('data-testid')||'';
+                      if(!t){ var ta=el.closest('[data-testid]'); t=ta?ta.getAttribute('data-testid'):''; }
+                      if(c.testid && t!==c.testid) return false;
+                      if(c.testidList && c.testidList.indexOf(t)===-1) return false;
+                    }
+                    if(c.elId || c.elIdList){
+                      if(c.elId && el.id!==c.elId) return false;
+                      if(c.elIdList && c.elIdList.indexOf(el.id)===-1) return false;
+                    }
+                    if(c.profileId || c.profileSlug || c.profileIdList || c.profileSlugList){
+                      var link = el.tagName==='A'?el:el.closest('a');
+                      if(!link) return false;
+                      var href = link.getAttribute('href')||'';
+                      if(c.profileId && href.indexOf('profile.php?id='+c.profileId)===-1) return false;
+                      if(c.profileSlug && href.indexOf('/'+c.profileSlug)===-1) return false;
+                      if(c.profileIdList && !c.profileIdList.some(function(v){return href.indexOf('profile.php?id='+v)!==-1;})) return false;
+                      if(c.profileSlugList && !c.profileSlugList.some(function(v){return href.indexOf('/'+v)!==-1;})) return false;
+                    }
+                    if(c.text || c.textList){
+                      var txt=(el.textContent||'').trim();
+                      if(c.text){
+                        if(c.textMode==='contains'){ if(txt.indexOf(c.text)===-1) return false; }
+                        else { if(txt!==c.text) return false; }
+                      }
+                      if(c.textList && c.textList.indexOf(txt)===-1) return false;
+                    }
+                    if(c.shape){ if(shapeOf(el)!==c.shape) return false; }
+                    if(c.sizeBucket){ if(sizeBucketOf(el)!==c.sizeBucket) return false; }
+                    return true;
+                  }catch(e){ return false; }
+                }
+                function pass(){
+                  try{
+                    var candidates = document.querySelectorAll('a,button,[role],img,svg');
+                    var rules = window.__slimEBRules || [];
+                    for (var i=0;i<candidates.length;i++){
+                      var el = candidates[i];
+                      if (el.__slimEBHidden) continue;
+                      for (var j=0;j<rules.length;j++){
+                        var rule = rules[j];
+                        if (rule.enabled===false) continue;
+                        try {
+                          if (ruleMatches(el, rule.criteria||{})) {
+                            // اقتراح 1: حظر الحاوية/الكرت الكامل بدل العنصر فقط
+                            var target = el;
+                            if (rule.expandToCard) {
+                              var card = el.closest('article,[role="article"],[data-pagelet]');
+                              if (card) target = card;
+                            }
+                            if (!target.__slimEBHidden) {
+                              target.style.setProperty('display','none','important');
+                              target.style.setProperty('pointer-events','none','important');
+                              target.__slimEBHidden = true;
+                              // اقتراح 4: سجل النشاط (يُرسل فقط أول مرة، وفقط لو مفعّل من الإعدادات)
+                              if (rule.__logEnabled && window.SlimEBLog) {
+                                try {
+                                  window.SlimEBLog.log(JSON.stringify({ruleId: rule.id, label: rule.label, tag: target.tagName}));
+                                } catch(e) {}
+                              }
+                            }
+                            el.__slimEBHidden = true;
+                            break;
+                          }
+                        } catch(e) {}
+                      }
+                    }
+                  }catch(e){}
+                }
+                pass();
+                if (window.__slimEBObserver) { try{ window.__slimEBObserver.disconnect(); }catch(e){} }
+                window.__slimEBObserver = new MutationObserver(function(){
+                  clearTimeout(window.__slimEBTimer);
+                  window.__slimEBTimer = setTimeout(pass, 150);
+                });
+                window.__slimEBObserver.observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['style','class']});
+                clearInterval(window.__slimEBWatchdog);
+                window.__slimEBWatchdog = setInterval(pass, 1000);
+              } catch(e) {}
+            })();
+        """.trimIndent()
+    }
+
+    private fun applyElementBlockRules() {
+        if (!web.settings.javaScriptEnabled || isAuth(web.url ?: "")) return
+        purgeExpiredElementBlockRules() // اقتراح 2: تنظيف القواعد المؤقتة المنتهية
+        val currentUrl = web.url ?: return
+        val all = elementBlockRulesJson()
+        val active = org.json.JSONArray()
+        val logEnabled = ebFeat("log")
+        for (i in 0 until all.length()) {
+            val o = all.optJSONObject(i) ?: continue
+            if (!o.optBoolean("enabled", true)) continue
+            if (!elementBlockRuleMatchesScope(o, currentUrl)) continue // اقتراح 3: نطاق/استثناء الرابط
+            o.put("__logEnabled", logEnabled)
+            active.put(o)
+        }
+        if (active.length() == 0) return
+        web.evaluateJavascript(elementBlockEngineJs(active), null)
+    }
+
+    private val EB_IDENTITY_KEYS = listOf("profileId", "profileSlug", "testid", "elId", "text", "aria")
+
+    // اقتراح 11: دمج القواعد اللي تتفق بكل شي إلا معرّف هوية واحد (نفس الشكل، هوية مختلفة)
+    private fun mergeSimilarElementBlockRules() {
+        val a = elementBlockRulesJson()
+        val groups = LinkedHashMap<String, MutableList<JSONObject>>()
+        for (i in 0 until a.length()) {
+            val o = a.optJSONObject(i) ?: continue
+            val c = o.optJSONObject("criteria") ?: continue
+            val presentIdentity = EB_IDENTITY_KEYS.filter { c.has(it) }
+            if (presentIdentity.size != 1) continue
+            val idKey = presentIdentity[0]
+            val rest = JSONObject(c.toString())
+            rest.remove(idKey)
+            if (idKey == "aria") rest.remove("ariaMode")
+            if (idKey == "text") rest.remove("textMode")
+            val sig = idKey + "::" + canonicalCriteria(rest) + "::" + o.optBoolean("expandToCard", false) + "::" +
+                o.optString("urlScope", "all") + "::" + o.optString("urlPattern", "")
+            groups.getOrPut(sig) { mutableListOf() }.add(o)
+        }
+        var mergedCount = 0
+        val toRemoveIds = mutableSetOf<String>()
+        val newRules = mutableListOf<JSONObject>()
+        for ((sig, list) in groups) {
+            if (list.size < 2) continue
+            val idKey = sig.substringBefore("::")
+            val values = list.mapNotNull { it.optJSONObject("criteria")?.optString(idKey) }.filter { it.isNotEmpty() }.distinct()
+            if (values.size < 2) continue
+            val first = list[0]
+            val newCriteria = JSONObject(first.optJSONObject("criteria")!!.toString())
+            newCriteria.remove(idKey)
+            newCriteria.put(idKey + "List", org.json.JSONArray(values))
+            val merged = JSONObject()
+            merged.put("id", UUID.randomUUID().toString())
+            merged.put("label", "🧹 مدمجة (${values.size}): ${first.optString("label", "")}")
+            merged.put("enabled", true)
+            merged.put("createdAt", System.currentTimeMillis())
+            merged.put("criteria", newCriteria)
+            if (first.optBoolean("expandToCard", false)) merged.put("expandToCard", true)
+            if (first.optString("urlScope", "all") != "all") {
+                merged.put("urlScope", first.optString("urlScope")); merged.put("urlPattern", first.optString("urlPattern"))
+            }
+            newRules.add(merged)
+            list.forEach { toRemoveIds.add(it.optString("id")) }
+            mergedCount += list.size
+        }
+        if (toRemoveIds.isEmpty()) { notifyUser("ما لقيت قواعد قابلة للدمج حاليًا"); return }
+        val out = org.json.JSONArray()
+        for (i in 0 until a.length()) {
+            val o = a.optJSONObject(i) ?: continue
+            if (!toRemoveIds.contains(o.optString("id"))) out.put(o)
+        }
+        newRules.forEach { out.put(it) }
+        saveElementBlockRulesJson(out)
+        applyElementBlockRules()
+        notifyUser("تم دمج $mergedCount قاعدة إلى ${newRules.size} قاعدة موحّدة")
+    }
+
+    private fun openElementBlockLogViewer() {
+        val log = elementBlockLogJson()
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 16, 24, 8) }
+        if (log.length() == 0) {
+            box.addView(TextView(this).apply { text = "ما فيه سجل بعد — بيتعبّى تلقائيًا أول ما قاعدة تخفي عنصر فعليًا." })
+        } else {
+            val fmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+            for (i in 0 until log.length()) {
+                val e = log.optJSONObject(i) ?: continue
+                val time = fmt.format(Date(e.optLong("time", 0L)))
+                box.addView(TextView(this).apply {
+                    text = "$time — ${e.optString("label", "؟")} (${e.optString("tag", "?")})"
+                    setPadding(0, 4, 0, 4)
+                })
+            }
+        }
+        AlertDialog.Builder(this).setTitle("📜 آخر ${log.length()} عملية إخفاء فعلية")
+            .setView(ScrollView(this).apply { addView(box) })
+            .setNegativeButton("إغلاق", null)
+            .show()
+    }
+
+    private fun openElementBlockRulesManager() {
+        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 16, 24, 8) }
+        outer.addView(TextView(this).apply {
+            text = "هذه القائمة منفصلة تمامًا عن \"إدارة قواعد JS/CSS\" اليدوية — خاصة فقط بالعناصر اللي حظرتها عبر وضع الالتقاط."
+            setPadding(0, 0, 0, 8); textSize = 13f
+        })
+
+        val toolsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val settingsBtn = Button(this).apply { text = "⚙️ الميزات" }
+        settingsBtn.setOnClickListener { openElementBlockFeatureSettings() }
+        toolsRow.addView(settingsBtn)
+        if (ebFeat("log")) {
+            val logBtn = Button(this).apply { text = "📜 السجل" }
+            logBtn.setOnClickListener { openElementBlockLogViewer() }
+            toolsRow.addView(logBtn)
+        }
+        outer.addView(toolsRow)
+
+        if (ebFeat("merge")) {
+            val mergeBtn = Button(this).apply { text = "🧹 دمج القواعد المتشابهة" }
+            mergeBtn.setOnClickListener { mergeSimilarElementBlockRules() }
+            outer.addView(mergeBtn)
+        }
+
+        // اقتراح 9: بحث
+        val searchInput = EditText(this).apply { hint = "بحث بالاسم..." }
+        outer.addView(searchInput)
+
+        // اقتراح 8: ترتيب
+        val sortOptions = listOf("الأحدث أولًا", "الأقدم أولًا", "أبجديًا")
+        val sortSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, sortOptions)
+        }
+        outer.addView(sortSpinner)
+
+        val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        outer.addView(listBox)
+
+        fun refresh() {
+            listBox.removeAllViews()
+            var a = elementBlockRulesJson()
+            val query = searchInput.text.toString().trim()
+            val items = mutableListOf<JSONObject>()
+            for (i in 0 until a.length()) { a.optJSONObject(i)?.let { items.add(it) } }
+            val filtered = if (query.isEmpty()) items else items.filter { it.optString("label", "").contains(query, ignoreCase = true) }
+            val sorted = when (sortSpinner.selectedItemPosition) {
+                1 -> filtered.sortedBy { it.optLong("createdAt", 0L) }
+                2 -> filtered.sortedBy { it.optString("label", "") }
+                else -> filtered.sortedByDescending { it.optLong("createdAt", 0L) }
+            }
+
+            if (sorted.isEmpty()) {
+                listBox.addView(TextView(this).apply {
+                    text = if (items.isEmpty()) "لا توجد عناصر محظورة بعد. استخدم وضع الالتقاط لإضافة أول عنصر." else "ما فيه نتائج مطابقة للبحث."
+                    setPadding(0, 12, 0, 12)
+                })
+            } else {
+                sorted.forEachIndexed { idx, o ->
+                    val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 6, 0, 6) }
+                    val isEnabled = o.optBoolean("enabled", true)
+                    val criteria = o.optJSONObject("criteria") ?: JSONObject()
+                    val keysIter = criteria.keys()
+                    val criteriaKeys = mutableListOf<String>()
+                    while (keysIter.hasNext()) { criteriaKeys.add(keysIter.next()) }
+                    val extras = mutableListOf<String>()
+                    if (o.optBoolean("expandToCard", false)) extras.add("كرت كامل")
+                    if (o.optLong("expiresAt", 0L) > 0L) extras.add("مؤقت")
+                    if (o.optString("urlScope", "all") != "all") extras.add("نطاق محدد")
+                    val extraTxt = if (extras.isNotEmpty()) " [${extras.joinToString(", ")}]" else ""
+                    val text = TextView(this).apply {
+                        text = "${if (isEnabled) "✓" else "○"} ${o.optString("label", "عنصر")}$extraTxt\nمعايير: ${criteriaKeys.joinToString(" + ")}"
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        setPadding(0, 4, 8, 4)
+                    }
+                    val btnCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                    val toggleBtn = Button(this).apply { text = if (isEnabled) "إيقاف" else "تفعيل" }
+                    toggleBtn.setOnClickListener {
+                        o.put("enabled", !isEnabled)
+                        val arr = elementBlockRulesJson()
+                        for (k in 0 until arr.length()) {
+                            val ok = arr.optJSONObject(k)
+                            if (ok?.optString("id") == o.optString("id")) { arr.put(k, o); break }
+                        }
+                        saveElementBlockRulesJson(arr)
+                        applyElementBlockRules()
+                        refresh()
+                    }
+                    val deleteBtn = Button(this).apply { text = "حذف" }
+                    deleteBtn.setOnClickListener {
+                        val arr = elementBlockRulesJson(); val out = org.json.JSONArray()
+                        for (k in 0 until arr.length()) {
+                            val ok = arr.optJSONObject(k)
+                            if (ok != null && ok.optString("id") != o.optString("id")) out.put(ok)
+                        }
+                        saveElementBlockRulesJson(out)
+                        notifyUser("تم الحذف — حدّث الصفحة لإرجاع العنصر للظهور")
+                        refresh()
+                    }
+                    btnCol.addView(toggleBtn); btnCol.addView(deleteBtn)
+                    row.addView(text); row.addView(btnCol)
+                    listBox.addView(row)
+                    if (idx < sorted.size - 1) {
+                        listBox.addView(View(this).apply {
+                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+                            setBackgroundColor(Color.LTGRAY)
+                        })
+                    }
+                }
+            }
+        }
+        searchInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { refresh() }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+        sortSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { refresh() }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        refresh()
+
+        AlertDialog.Builder(this).setTitle("🎯 العناصر المحظورة (منفصلة عن قواعد JS/CSS)")
+            .setView(ScrollView(this).apply { addView(outer) })
+            .setNegativeButton("إغلاق", null)
+            .show()
     }
 
     private fun applyCustomRulesDelayed() {
@@ -2411,6 +3115,7 @@ val info = TextView(this).apply {
         if (isAuth(web.url ?: "") || !web.settings.javaScriptEnabled) return
         applyCustomRules()
         applyControls()
+        applyElementBlockRules()
     }
 
     override fun onBackPressed(){ if(web.canGoBack()) web.goBack() else super.onBackPressed() }

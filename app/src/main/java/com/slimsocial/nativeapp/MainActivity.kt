@@ -2140,10 +2140,16 @@ class MainActivity : Activity() {
         (function(){
           window.__slimPickerActive = false;
           if (window.__slimPickerMove) document.removeEventListener('pointermove', window.__slimPickerMove, true);
+          if (window.__slimPickerDown) document.removeEventListener('pointerdown', window.__slimPickerDown, true);
+          if (window.__slimPickerTrack) document.removeEventListener('pointermove', window.__slimPickerTrack, true);
           if (window.__slimPickerTap) {
-            document.removeEventListener('pointerdown', window.__slimPickerTap, true);
+            document.removeEventListener('pointerup', window.__slimPickerTap, true);
             document.removeEventListener('click', window.__slimPickerTap, true);
           }
+          window.__slimPickerMove = null;
+          window.__slimPickerDown = null;
+          window.__slimPickerTrack = null;
+          window.__slimPickerTap = null;
           var hl = document.getElementById('slim-picker-highlight'); if (hl) hl.remove();
           var tip = document.getElementById('slim-picker-tip'); if (tip) tip.remove();
         })();
@@ -2199,6 +2205,7 @@ class MainActivity : Activity() {
             container.addView(sw)
         }
         featSwitch("cardmode", "خيار \"حظر الكرت كامل\" عند الالتقاط")
+        featSwitch("actions", "إجراءات منع الضغط والروابط والتفاعلات والعناصر التابعة")
         featSwitch("duration", "خيار \"حظر مؤقت (24 ساعة / 7 أيام)\"")
         featSwitch("scope", "خيار \"نطاق برابط محدد / استثناء رابط\"")
         featSwitch("log", "سجّل آخر 20 عملية إخفاء فعلية")
@@ -2320,6 +2327,24 @@ class MainActivity : Activity() {
             container.addView(cardModeCb)
         }
 
+        // إجراءات مستقلة: يمكن جمع أكثر من إجراء في نفس القاعدة.
+        var actionTouchCb: CheckBox? = null
+        var actionLinkCb: CheckBox? = null
+        var actionInteractCb: CheckBox? = null
+        var actionChildrenCb: CheckBox? = null
+        if (ebFeat("actions")) {
+            container.addView(TextView(this).apply { text = "إجراءات الحظر:"; setPadding(0, 12, 0, 4) })
+            actionTouchCb = CheckBox(this).apply { text = "منع الضغط واللمس على العنصر (بدون إخفائه)"; isChecked = false }
+            actionLinkCb = CheckBox(this).apply { text = "منع الروابط التابعة له عند الضغط"; isChecked = false }
+            actionInteractCb = CheckBox(this).apply { text = "منع التفاعلات التابعة له (click / touch / pointer / keyboard / submit)"; isChecked = false }
+            actionChildrenCb = CheckBox(this).apply { text = "تطبيق الإجراء على العنصر وكل العناصر التابعة له"; isChecked = false }
+            container.addView(actionTouchCb); container.addView(actionLinkCb); container.addView(actionInteractCb); container.addView(actionChildrenCb)
+            container.addView(TextView(this).apply {
+                text = "منع الضغط فقط لا يخفي العنصر. حظر البروفايل يوسّع الهدف تلقائيًا إلى الرابط/الحاوية المناسبة بدل صورة البروفايل وحدها."
+                textSize = 12f; setPadding(0, 4, 0, 8)
+            })
+        }
+
         // اقتراح 2: حظر مؤقت
         var durationSpinner: Spinner? = null
         val durationOptions = listOf("دائم" to 0L, "24 ساعة" to 86_400_000L, "7 أيام" to 604_800_000L, "30 يوم" to 2_592_000_000L)
@@ -2379,7 +2404,12 @@ class MainActivity : Activity() {
                     val expiresAt = if (durationMs > 0L) System.currentTimeMillis() + durationMs else 0L
                     val urlScope = when (scopeSpinner?.selectedItemPosition) { 1 -> "only"; 2 -> "except"; else -> "all" }
                     val urlPattern = urlPatternInput?.text?.toString()?.trim() ?: ""
-                    saveElementBlockRuleAdvanced(criteria, finalLabel, expandToCard, expiresAt, urlScope, urlPattern)
+                    val blockTouch = actionTouchCb?.isChecked ?: false
+                    val blockLink = actionLinkCb?.isChecked ?: false
+                    val blockInteractions = actionInteractCb?.isChecked ?: false
+                    val blockDescendants = actionChildrenCb?.isChecked ?: false
+                    saveElementBlockRuleAdvanced(criteria, finalLabel, expandToCard, expiresAt, urlScope, urlPattern,
+                        blockTouch, blockLink, blockInteractions, blockDescendants)
                 }
                 if (pickerModeActive) applyElementPicker(true)
             }
@@ -2407,7 +2437,11 @@ class MainActivity : Activity() {
         expandToCard: Boolean = false,
         expiresAt: Long = 0L,
         urlScope: String = "all",
-        urlPattern: String = ""
+        urlPattern: String = "",
+        blockTouch: Boolean = false,
+        blockLink: Boolean = false,
+        blockInteractions: Boolean = false,
+        blockDescendants: Boolean = false
     ) {
         // اقتراح 10: تحذير عند تجاوز عدد القواعد الموصى به
         val existing = elementBlockRulesJson()
@@ -2437,6 +2471,10 @@ class MainActivity : Activity() {
         if (expandToCard) o.put("expandToCard", true)
         if (expiresAt > 0L) o.put("expiresAt", expiresAt)
         if (urlScope != "all") { o.put("urlScope", urlScope); o.put("urlPattern", urlPattern) }
+        if (blockTouch) o.put("blockTouch", true)
+        if (blockLink) o.put("blockLink", true)
+        if (blockInteractions) o.put("blockInteractions", true)
+        if (blockDescendants) o.put("blockDescendants", true)
         val a = elementBlockRulesJson()
         a.put(o)
         saveElementBlockRulesJson(a)
@@ -2576,43 +2614,71 @@ class MainActivity : Activity() {
                     return true;
                   }catch(e){ return false; }
                 }
-                function pass(){
-                  try{
-                    var candidates = document.querySelectorAll('a,button,[role],img,svg');
-                    var rules = window.__slimEBRules || [];
-                    for (var i=0;i<candidates.length;i++){
-                      var el = candidates[i];
-                      if (el.__slimEBHidden) continue;
-                      for (var j=0;j<rules.length;j++){
-                        var rule = rules[j];
-                        if (rule.enabled===false) continue;
-                        try {
-                          if (ruleMatches(el, rule.criteria||{})) {
-                            // اقتراح 1: حظر الحاوية/الكرت الكامل بدل العنصر فقط
-                            var target = el;
-                            if (rule.expandToCard) {
-                              var card = el.closest('article,[role="article"],[data-pagelet]');
-                              if (card) target = card;
-                            }
-                            if (!target.__slimEBHidden) {
-                              target.style.setProperty('display','none','important');
-                              target.style.setProperty('pointer-events','none','important');
-                              target.__slimEBHidden = true;
-                              // اقتراح 4: سجل النشاط (يُرسل فقط أول مرة، وفقط لو مفعّل من الإعدادات)
-                              if (rule.__logEnabled && window.SlimEBLog) {
-                                try {
-                                  window.SlimEBLog.log(JSON.stringify({ruleId: rule.id, label: rule.label, tag: target.tagName}));
-                                } catch(e) {}
-                              }
-                            }
-                            el.__slimEBHidden = true;
-                            break;
-                          }
-                        } catch(e) {}
-                      }
-                    }
-                  }catch(e){}
-                }
+                 function getBlockTarget(el, rule){
+                   var c = rule.criteria || {};
+                   var target = el;
+                   // عند حظر بروفايل، الصورة ليست الهدف الحقيقي: نرفع الهدف للرابط ثم لبطاقة المحتوى.
+                   var isProfileRule = !!(c.profileId || c.profileSlug || c.profileIdList || c.profileSlugList);
+                   if (isProfileRule || rule.expandToCard) {
+                     var card = el.closest('article,[role="article"],[data-pagelet],[data-testid*="post"]');
+                     if (card) target = card;
+                     else { var anchor = el.tagName==='A' ? el : el.closest('a'); if (anchor) target = anchor; }
+                   }
+                   return target;
+                 }
+                 function preventEvents(target, rule){
+                   if (!target || target.__slimEBEvents) return;
+                   var blockTouch = !!rule.blockTouch;
+                   var blockLink = !!rule.blockLink;
+                   var blockInteractions = !!rule.blockInteractions;
+                   var blockDescendants = !!rule.blockDescendants;
+                   if (!(blockTouch || blockLink || blockInteractions || blockDescendants)) return;
+                   var handler = function(e){
+                     try{
+                       var link = e.target && e.target.closest ? e.target.closest('a') : null;
+                       if (blockLink && link && target.contains(link)) { e.preventDefault(); e.stopPropagation(); if(e.stopImmediatePropagation) e.stopImmediatePropagation(); return; }
+                       if (blockTouch || blockInteractions || blockDescendants) { e.preventDefault(); e.stopPropagation(); if(e.stopImmediatePropagation) e.stopImmediatePropagation(); }
+                     }catch(x){}
+                   };
+                   var events = blockInteractions ? ['click','dblclick','pointerdown','pointerup','pointermove','touchstart','touchend','touchmove','contextmenu','keydown','keyup','submit'] : ['click','pointerdown','pointerup','touchstart','touchend'];
+                   for(var k=0;k<events.length;k++) target.addEventListener(events[k], handler, true);
+                   target.__slimEBEvents = true;
+                   target.__slimEBEventHandler = handler;
+                   if (blockDescendants) { try { target.style.setProperty('pointer-events','none','important'); } catch(x){} }
+                 }
+                 function applyAction(target, rule){
+                   var hasAction = !!(rule.blockTouch || rule.blockLink || rule.blockInteractions || rule.blockDescendants);
+                   if (hasAction) preventEvents(target, rule);
+                   // القاعدة القديمة = إخفاء. قاعدة الإجراءات فقط = تنفيذ الإجراء دون إخفاء.
+                   if (!hasAction) { target.style.setProperty('display','none','important'); target.style.setProperty('pointer-events','none','important'); target.__slimEBHidden=true; }
+                   if (rule.__logEnabled && window.SlimEBLog && !target.__slimEBLogged) {
+                     try { window.SlimEBLog.log(JSON.stringify({ruleId: rule.id, label: rule.label, tag: target.tagName})); target.__slimEBLogged=true; } catch(e) {}
+                   }
+                 }
+                 function pass(){
+                   try{
+                     var candidates = document.querySelectorAll('a,button,[role],img,svg');
+                     var rules = window.__slimEBRules || [];
+                     for (var i=0;i<candidates.length;i++){
+                       var el = candidates[i];
+                       for (var j=0;j<rules.length;j++){
+                         var rule = rules[j];
+                         if (rule.enabled===false) continue;
+                         try {
+                           if (ruleMatches(el, rule.criteria||{})) {
+                             var target = getBlockTarget(el, rule);
+                             applyAction(target, rule);
+                             if (rule.blockDescendants) {
+                               var descendants = target.querySelectorAll('a,button,[role],input,textarea,select,img,svg');
+                               for (var d=0; d<descendants.length; d++) preventEvents(descendants[d], rule);
+                             }
+                             break;
+                           }
+                         } catch(e) {}
+                       }
+                     }
+                   }catch(e){}
+                 }
                 pass();
                 if (window.__slimEBObserver) { try{ window.__slimEBObserver.disconnect(); }catch(e){} }
                 window.__slimEBObserver = new MutationObserver(function(){
@@ -2684,6 +2750,10 @@ class MainActivity : Activity() {
             merged.put("createdAt", System.currentTimeMillis())
             merged.put("criteria", newCriteria)
             if (first.optBoolean("expandToCard", false)) merged.put("expandToCard", true)
+            if (first.optBoolean("blockTouch", false)) merged.put("blockTouch", true)
+            if (first.optBoolean("blockLink", false)) merged.put("blockLink", true)
+            if (first.optBoolean("blockInteractions", false)) merged.put("blockInteractions", true)
+            if (first.optBoolean("blockDescendants", false)) merged.put("blockDescendants", true)
             if (first.optString("urlScope", "all") != "all") {
                 merged.put("urlScope", first.optString("urlScope")); merged.put("urlPattern", first.optString("urlPattern"))
             }
@@ -2791,6 +2861,10 @@ class MainActivity : Activity() {
                     while (keysIter.hasNext()) { criteriaKeys.add(keysIter.next()) }
                     val extras = mutableListOf<String>()
                     if (o.optBoolean("expandToCard", false)) extras.add("كرت كامل")
+                    if (o.optBoolean("blockTouch", false)) extras.add("منع اللمس")
+                    if (o.optBoolean("blockLink", false)) extras.add("منع الروابط")
+                    if (o.optBoolean("blockInteractions", false)) extras.add("منع التفاعلات")
+                    if (o.optBoolean("blockDescendants", false)) extras.add("كل التوابع")
                     if (o.optLong("expiresAt", 0L) > 0L) extras.add("مؤقت")
                     if (o.optString("urlScope", "all") != "all") extras.add("نطاق محدد")
                     val extraTxt = if (extras.isNotEmpty()) " [${extras.joinToString(", ")}]" else ""

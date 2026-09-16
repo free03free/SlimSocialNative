@@ -2284,33 +2284,10 @@ class MainActivity : Activity() {
         str("sizeBucket")?.let { addCheck("sizeBucket", "الحجم التقريبي (${sizeLabelAr(it)})", false) }
         str("semantic")?.let { sem -> addCheck("semantic", "نوع دلالي: ${when(sem){"time"->"توقيت";"public"->"رمز عام/كرة أرضية";"profile"->"بروفايل";"interaction"->"تفاعل";else->sem}}", false) }
 
-        var matchMode = "AND"
-        var smartThreshold = 65
-        val smartInfo = TextView(this).apply {
-            text = "🧠 SMART: يجمع الأدلة داخل نفس الكرت، يعطي هوية الحساب/الرابط/الصورة وزنًا أعلى من الشكل والحجم، ويقبل المطابقة عند تجاوز عتبة الثقة."
-            setPadding(0, 8, 0, 8); setTextColor(Color.DKGRAY); textSize = 12f
-        }
-        container.addView(smartInfo)
-        val smartBtn = Button(this).apply { text = "🧠 المطابقة الذكية SMART" }
-        smartBtn.setOnClickListener {
-            matchMode = "SMART"
-            if (checks.values.none { it.isChecked }) {
-                listOf("profileId","profileSlug","profileName","profileLink","profileImage","semantic","aria","testid").forEach { checks[it]?.isChecked = true }
-            }
-            notifyUser("تم تفعيل SMART — الأدلة الأقوى لها وزن أكبر، والمطابقة تتم على مستوى الكرت عند الحاجة")
-        }
-        container.addView(smartBtn)
-        val thresholdLabel = TextView(this).apply { text = "عتبة الثقة الذكية: $smartThreshold%"; setPadding(0, 4, 0, 4) }
-        val thresholdBar = SeekBar(this).apply { max = 35; progress = 0 }
-        thresholdBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { smartThreshold = 50 + progress; thresholdLabel.text = "عتبة الثقة الذكية: $smartThreshold%" }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
-        container.addView(thresholdLabel); container.addView(thresholdBar)
+        var similarMode = false
         val similarBtn = Button(this).apply { text = "🎯 وضع التشابه الحقيقي: أي محدد من المختارات يكفي (OR)" }
         similarBtn.setOnClickListener {
-            matchMode = "OR"
+            similarMode = true
             checks.forEach { (_, cb) -> cb.isChecked = false }
             listOf("tag","role","shape","sizeBucket","semantic").forEach { checks[it]?.isChecked = true }
             notifyUser("تم تفعيل التشابه OR: تطابق أي محدد من هذه المجموعة يكفي")
@@ -2318,7 +2295,7 @@ class MainActivity : Activity() {
         container.addView(similarBtn)
         val exactBtn = Button(this).apply { text = "🔒 حظر هذا العنصر بالضبط (AND)" }
         exactBtn.setOnClickListener {
-            matchMode = "AND"
+            similarMode = false
             checks.forEach { (k, cb) -> cb.isChecked = (k == "profileId" || k == "profileSlug" || k == "aria" || k == "testid" || k == "elId") }
             notifyUser("تم اختيار المعرفات الدقيقة بنظام AND")
         }
@@ -2380,7 +2357,7 @@ class MainActivity : Activity() {
                     val testNeighbors = org.json.JSONArray(); neighborChecks.forEach { (nc, cb) -> if(cb.isChecked) testNeighbors.put(nc) }
                     if(testCriteria.length()==0 && testNeighbors.length()==0) notifyUser("اختر معيارًا أو محددًا مجاورًا واحدًا على الأقل")
                     else {
-                        val payload = JSONObject().apply { put("criteria", testCriteria); put("neighborCriteria", testNeighbors); put("matchMode", matchMode); put("smartThreshold", smartThreshold) }
+                        val payload = JSONObject().apply { put("criteria", testCriteria); put("neighborCriteria", testNeighbors); put("matchMode", if(similarMode) "OR" else "AND") }
                         web.evaluateJavascript(elementBlockDryRunJs(payload), null)
                     }
                 }
@@ -2404,7 +2381,7 @@ class MainActivity : Activity() {
                     val expiresAt=if(durationMs>0L)System.currentTimeMillis()+durationMs else 0L
                     val urlScope=when(scopeSpinner?.selectedItemPosition){1->"only";2->"except";else->"all"}
                     val urlPattern=urlPatternInput?.text?.toString()?.trim() ?: ""
-                    saveElementBlockRuleAdvanced(criteria,finalLabel,expandToCard,expiresAt,urlScope,urlPattern,selectedNeighbors,matchMode,smartThreshold)
+                    saveElementBlockRuleAdvanced(criteria,finalLabel,expandToCard,expiresAt,urlScope,urlPattern,selectedNeighbors,if(similarMode)"OR" else "AND")
                 }
                 if(pickerModeActive) applyElementPicker(true)
             }.show()
@@ -2437,8 +2414,7 @@ class MainActivity : Activity() {
         urlScope: String = "all",
         urlPattern: String = "",
         neighborCriteria: org.json.JSONArray = org.json.JSONArray(),
-        matchMode: String = "AND",
-        smartThreshold: Int = 65
+        matchMode: String = "AND"
     ) {
         // اقتراح 10: تحذير عند تجاوز عدد القواعد الموصى به
         val existing = elementBlockRulesJson()
@@ -2476,7 +2452,6 @@ class MainActivity : Activity() {
         if (expandToCard) o.put("cardEvidenceMode", "SAME_CARD")
         o.put("evidenceKeys", criteria.keys().asSequence().toList())
         o.put("matchMode", matchMode)
-        if (matchMode == "SMART") o.put("smartThreshold", smartThreshold.coerceIn(50, 85))
         val a = elementBlockRulesJson()
         a.put(o)
         saveElementBlockRulesJson(a)
@@ -2536,14 +2511,6 @@ class MainActivity : Activity() {
                   if(m==='OR')return ks.some(function(k){return one(el,k,c[k]);});
                   return ks.every(function(k){return one(el,k,c[k]);});
                 }
-                var SMART_WEIGHTS={profileId:40,profileLink:36,profileSlug:34,profileImage:24,profileName:22,testid:16,elId:14,aria:12,semantic:10,text:8,role:5,tag:4,shape:3,sizeBucket:2};
-                function smartMatch(card,c,threshold){
-                  var ks=Object.keys(c).filter(function(k){return SMART_WEIGHTS[k]!==undefined&&c[k]!==undefined&&c[k]!==null&&String(c[k])!=='';}),nodes=card.querySelectorAll('a,button,[role],img,svg,span,div'),total=0,hit=0,hits=0,identity=false;
-                  for(var i=0;i<ks.length;i++){var k=ks[i],w=SMART_WEIGHTS[k],ok=false;for(var j=0;j<nodes.length&&!ok;j++)ok=one(nodes[j],k,c[k]);total+=w;if(ok){hit+=w;hits++;if(k==='profileId'||k==='profileLink'||k==='profileSlug')identity=true;}}
-                  var score=total?Math.round(hit*100/total):0;
-                  var minEvidence=identity?1:Math.min(2,ks.length);
-                  return hits>=minEvidence&&score>=threshold;
-                }
                 function evidenceCount(card){
                   var types={}, all=card.querySelectorAll('a,button,img,svg,[role],span,div'), txt=norm(card.textContent||'');
                   for(var i=0;i<all.length;i++){
@@ -2583,8 +2550,7 @@ class MainActivity : Activity() {
                 var els=document.querySelectorAll('a,button,[role],img,svg,span,div'),seen=[],count=0;
                 for(var i=0;i<els.length;i++){
                   var el=els[i],target=findTarget(el),ok=false;
-                  if(mode==='SMART')ok=smartMatch(target,c,Math.max(50,Math.min(85,parseInt(p.smartThreshold||65,10)||65)));
-                  else if(mode==='AND'&&Object.keys(c).length>1)ok=sameCardEvidence(target,c);
+                  if(mode==='AND'&&Object.keys(c).length>1)ok=sameCardEvidence(target,c);
                   else ok=match(el,c,mode);
                   if(!ok)for(var q=0;q<neighbors.length&&!ok;q++)ok=match(el,neighbors[q],'AND');
                   if(ok&&seen.indexOf(target)<0){seen.push(target);count++;}
@@ -2671,31 +2637,6 @@ class MainActivity : Activity() {
                   if(mode==='OR')return used.some(function(k){return one(el,c,k);});
                   return used.every(function(k){return one(el,c,k);});
                 }
-                // SMART matcher: evidence is weighted instead of treating every selector equally.
-                // Strong identity signals can stand alone; weak visual/structural signals cannot.
-                var SMART_WEIGHTS={profileId:40,profileLink:36,profileSlug:34,profileImage:24,profileName:22,testid:16,elId:14,aria:12,semantic:10,text:8,role:5,tag:4,shape:3,sizeBucket:2};
-                function smartEvidence(card,c){
-                  var ks=keysOf(c), total=0, matched=0, strong=0, details=[];
-                  if(!ks.length)return {ok:false,score:0,matched:0,total:0,details:[]};
-                  var nodes=card.querySelectorAll('a,button,[role],img,svg,span,div');
-                  for(var i=0;i<ks.length;i++){
-                    var k=ks[i],hit=false;
-                    for(var j=0;j<nodes.length&&!hit;j++)hit=one(nodes[j],c,k);
-                    var w=SMART_WEIGHTS[k]||1; total+=w;
-                    if(hit){matched+=w;details.push(k);if(w>=20)strong++;}
-                  }
-                  var score=total?Math.round(matched*100/total):0;
-                  // Require two independent signals unless there is a strong account identity.
-                  var identityHit=details.indexOf('profileId')>=0||details.indexOf('profileLink')>=0||details.indexOf('profileSlug')>=0;
-                  var minEvidence=identityHit?1:Math.min(2,ks.length);
-                  return {ok:matched>0&&details.length>=minEvidence,score:score,matched:details.length,total:ks.length,details:details,strong:strong};
-                }
-                function smartCardMatch(el,c,rule){
-                  var card=findBlockTarget(el),r=smartEvidence(card,c);
-                  var threshold=Math.max(50,Math.min(85,parseInt(rule.smartThreshold||65,10)||65));
-                  var ok=r.ok&&r.score>=threshold;
-                  return {ok:ok,card:card,score:r.score,details:r.details,matched:r.matched,total:r.total,threshold:threshold};
-                }
                 function evidenceTypes(card){
                   var types={},nodes=card.querySelectorAll('a,button,[role],img,svg,span,div');
                   for(var i=0;i<nodes.length;i++){
@@ -2781,12 +2722,8 @@ class MainActivity : Activity() {
                       for(var j=0;j<rules.length;j++){
                         var rule=rules[j];if(rule.enabled===false)continue;
                         try{
-                          var c=rule.criteria||{},mode=rule.matchMode||'AND',matched=false,target=null,reason='criteria',smartResult=null;
-                          if(mode==='SMART'){
-                            smartResult=smartCardMatch(el,c,rule);
-                            matched=smartResult.ok;
-                            if(matched){target=rule.expandToCard?smartResult.card:smartResult.card;reason='SMART '+smartResult.score+'% ('+smartResult.details.join(', ')+')';}
-                          }else if(rule.cardEvidenceMode==='SAME_CARD'){
+                          var c=rule.criteria||{},mode=rule.matchMode||'AND',matched=false,target=null,reason='criteria';
+                          if(rule.cardEvidenceMode==='SAME_CARD'){
                             matched=sameCardMatch(el,c,mode);
                             if(matched){target=findBlockTarget(el);reason='same-card-evidence';}
                           }else if(rule.neighborCriteria&&rule.neighborCriteria.length){
@@ -2970,16 +2907,10 @@ class MainActivity : Activity() {
         val matchSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity,
                 android.R.layout.simple_spinner_dropdown_item,
-                listOf("AND — كل المحددات الأساسية", "OR — أي محدد يكفي", "SMART — أوزان + أدلة داخل الكرت"))
-            setSelection(when(existing.optString("matchMode", "AND")){"OR"->1;"SMART"->2;else->0})
+                listOf("AND — كل المحددات الأساسية", "OR — أي محدد يكفي"))
+            setSelection(if (existing.optString("matchMode", "AND") == "OR") 1 else 0)
         }
         form.addView(matchSpinner)
-        val smartThresholdInput = EditText(this).apply {
-            hint = "عتبة SMART (50-85)"
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(existing.optInt("smartThreshold", 65).toString())
-        }
-        form.addView(smartThresholdInput)
 
         val cardMode = Switch(this).apply {
             text = "حظر الكرت/المنشور الكامل"
@@ -3093,10 +3024,7 @@ class MainActivity : Activity() {
                 updated.put("label", label)
                 updated.put("enabled", enabled.isChecked)
                 updated.put("criteria", criteria)
-                val selectedMode = when(matchSpinner.selectedItemPosition){1->"OR";2->"SMART";else->"AND"}
-                updated.put("matchMode", selectedMode)
-                if(selectedMode=="SMART") updated.put("smartThreshold", smartThresholdInput.text.toString().toIntOrNull()?.coerceIn(50,85) ?: 65)
-                else updated.remove("smartThreshold")
+                updated.put("matchMode", if (matchSpinner.selectedItemPosition == 1) "OR" else "AND")
                 if (cardMode.isChecked) updated.put("expandToCard", true) else updated.remove("expandToCard")
 
                 val durationChoice = durationOptions.getOrNull(durationSpinner.selectedItemPosition)?.second ?: 0L
@@ -3220,7 +3148,6 @@ class MainActivity : Activity() {
                     if (o.optLong("expiresAt", 0L) > 0L) extras.add("مؤقت")
                     if (o.optString("urlScope", "all") != "all") extras.add("نطاق محدد")
                     if (o.optString("matchMode", "AND") == "OR") extras.add("تشابه OR")
-                    if (o.optString("matchMode", "AND") == "SMART") extras.add("SMART ${o.optInt("smartThreshold",65)}%")
                     val nCount = o.optJSONArray("neighborCriteria")?.length() ?: 0
                     if (nCount > 0) extras.add("$nCount محددات مجاورة")
                     val extraTxt = if (extras.isNotEmpty()) " [${extras.joinToString(", ")}]" else ""
